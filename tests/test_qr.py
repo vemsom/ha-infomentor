@@ -56,10 +56,16 @@ async def test_page_and_frame_need_no_auth(hass, hass_client_no_auth, store) -> 
     frame = await client.get(path + "/frame")
     assert frame.status == 200
     assert frame.headers["Cache-Control"] == "no-store"
-    assert await frame.json() == {"matrix": None, "status": "starting", "launch_url": None}
+    assert await frame.json() == {
+        "matrix": None,
+        "status": "starting",
+        "launch_url": None,
+    }
 
 
-async def test_update_publishes_the_rotating_qr(hass, hass_client_no_auth, store) -> None:
+async def test_update_publishes_the_rotating_qr(
+    hass, hass_client_no_auth, store
+) -> None:
     """Every poll can republish a new payload and status."""
     session = store.open()
     client = await hass_client_no_auth()
@@ -81,7 +87,9 @@ async def test_same_device_link_is_published_to_the_page(
 ) -> None:
     """The single-phone variant shows a BankID button instead of a QR."""
     session = store.open()
-    session.update(None, "waiting", "https://app.bankid.com/?autostarttoken=X&redirect=null")
+    session.update(
+        None, "waiting", "https://app.bankid.com/?autostarttoken=X&redirect=null"
+    )
     client = await hass_client_no_auth()
 
     page = await (await client.get(urlsplit(session.url).path)).text()

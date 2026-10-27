@@ -48,9 +48,7 @@ class FakeBankIdLogin:
             raise InfoMentorConnectionError("offline")
         self.status = "waiting"
         if self.method == "same_device":
-            self.launch_url = (
-                "https://app.bankid.com/?autostarttoken=T&redirect=null"
-            )
+            self.launch_url = "https://app.bankid.com/?autostarttoken=T&redirect=null"
         if self.on_update is not None:
             self.on_update(self.qr_data, self.status, self.launch_url)
 
@@ -297,10 +295,8 @@ async def test_bankid_flow_with_the_real_login_chain(
 
     monkeypatch.setattr(
         config_flow,
-        "async_create_clientsession",
-        lambda _hass, **_kwargs: aiohttp.ClientSession(
-            cookie_jar=aiohttp.CookieJar(unsafe=True)
-        ),
+        "_new_bankid_session",
+        lambda: aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)),
     )
 
     result = await _open_menu(hass)

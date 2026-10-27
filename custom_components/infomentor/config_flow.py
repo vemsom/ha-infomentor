@@ -17,10 +17,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.aiohttp_client import (
-    async_create_clientsession,
-    async_get_clientsession,
-)
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import (
     Child,
@@ -44,6 +41,17 @@ _LOGGER = logging.getLogger(__name__)
 
 TOKEN_SCHEMA = vol.Schema({vol.Required(CONF_REFRESH_TOKEN): str})
 EMPTY_SCHEMA = vol.Schema({})
+
+
+def _new_bankid_session() -> aiohttp.ClientSession:
+    """A private session with its own connector and cookie jar.
+
+    The BankID login must not share a connector with Home Assistant or with the
+    runtime client: closing a session we own is the only way to end an attempt,
+    and a shared connector would take every other integration down with it.
+    """
+    return aiohttp.ClientSession()
+
 
 STEP_BANKID = "bankid"
 STEP_BANKID_PHONE = "bankid_phone"
@@ -139,11 +147,10 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
         if self._qr is None:
             self._qr = async_get_store(self.hass).open()
         if self._bankid_session is None:
-            # A dedicated, throwaway cookie jar: the SSO login cookies for this
-            # attempt never reach the session the runtime client uses.
-            self._bankid_session = async_create_clientsession(
-                self.hass, auto_cleanup=False
-            )
+            # A private session with its own connector and cookie jar: the SSO
+            # cookies for this attempt never reach the runtime client, and
+            # closing it cannot touch anything Home Assistant owns.
+            self._bankid_session = _new_bankid_session()
         login = BankIdLogin(
             self._bankid_session, method=method, on_update=self._async_bankid_update
         )
@@ -154,7 +161,9 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
             await self._async_close_bankid()
             return False
         except BankIdError:
-            _LOGGER.debug("InfoMentor BankID could not be started (unexpected response)")
+            _LOGGER.debug(
+                "InfoMentor BankID could not be started (unexpected response)"
+            )
             await self._async_close_bankid()
             return False
         self._login = login
@@ -236,12 +245,10 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
         self._login_task = None
         if self._bankid_session is not None:
             session, self._bankid_session = self._bankid_session, None
-            # We created this session with auto_cleanup=False, so the connector
-            # is ours to close; Home Assistant's own session must stay open.
-            connector = session.connector
-            session.detach()
-            if connector is not None:
-                await connector.close()
+            # The session and its connector are ours alone (see
+            # _new_bankid_session); closing it cannot affect Home Assistant or
+            # any other integration.
+            await session.close()
 
     # -- refresh token (advanced) ------------------------------------------- #
 

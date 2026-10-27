@@ -153,7 +153,10 @@ class BankIdQrView(HomeAssistantView):
                     "status": entry.status,
                     "launch_url": entry.launch_url,
                 },
-                headers={**SECURITY_HEADERS, "Content-Security-Policy": "default-src 'none'"},
+                headers={
+                    **SECURITY_HEADERS,
+                    "Content-Security-Policy": "default-src 'none'",
+                },
             )
         return web.Response(
             text=_page(nonce, entry.launch_url is not None),
