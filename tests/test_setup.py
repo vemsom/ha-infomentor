@@ -179,4 +179,16 @@ def test_manifest_and_translations_are_valid() -> None:
         )
         for step, payload in strings[section]["step"].items():
             assert step in swedish[section]["step"]
-            assert set(payload["data"]) == set(swedish[section]["step"][step]["data"])
+            translated = swedish[section]["step"][step]
+            assert set(payload.get("data", {})) == set(translated.get("data", {}))
+            assert set(payload.get("menu_options", {})) == set(
+                translated.get("menu_options", {})
+            )
+    # The BankID path is the default; its steps must be translated.
+    for step in ("user", "reauth", "bankid", "bankid_phone", "token"):
+        assert step in strings["config"]["step"]
+        assert "menu_options" in strings["config"]["step"][step] or step not in (
+            "user",
+            "reauth",
+        )
+    assert "bankid_scan" in strings["config"]["progress"]

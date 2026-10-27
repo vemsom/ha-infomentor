@@ -3,7 +3,35 @@
     "step": {
       "user": {
         "title": "Connect to InfoMentor",
-        "description": "Paste an OAuth2 refresh token from the InfoMentor Hub mobile grant. See the integration README for how to create your own token.",
+        "description": "Log in with BankID. No token needs to be copied.",
+        "menu_options": {
+          "bankid": "BankID – scan a QR code on another device",
+          "bankid_phone": "BankID – on this phone",
+          "token": "Paste a refresh token (advanced)"
+        }
+      },
+      "reauth": {
+        "title": "InfoMentor rejected the login",
+        "description": "Authorise the integration again with BankID.",
+        "menu_options": {
+          "bankid": "BankID – scan a QR code on another device",
+          "bankid_phone": "BankID – on this phone",
+          "token": "Paste a refresh token (advanced)"
+        }
+      },
+      "bankid": {
+        "title": "Log in with BankID",
+        "description": "Open [the QR code in a browser]({qr_url}) and scan it with BankID on another device. The link only works while this dialog is open and is closed when you continue. If you only have one phone, use the “on this phone” option instead.",
+        "data": {}
+      },
+      "bankid_phone": {
+        "title": "Log in with BankID on this phone",
+        "description": "Open [the login page]({qr_url}) on the phone that has BankID and tap “Öppna BankID”. The link only works while this dialog is open.",
+        "data": {}
+      },
+      "token": {
+        "title": "Connect with a refresh token",
+        "description": "Paste an OAuth2 refresh token from the InfoMentor Hub mobile grant. Only needed when BankID cannot be used.",
         "data": {
           "refresh_token": "Refresh token"
         }
@@ -14,26 +42,25 @@
         "data": {
           "children": "Children"
         }
-      },
-      "reauth_confirm": {
-        "title": "Refresh token rejected",
-        "description": "InfoMentor no longer accepts the stored refresh token. Paste a newly created token to resume updates.",
-        "data": {
-          "refresh_token": "Refresh token"
-        }
       }
     },
+    "progress": {
+      "bankid_scan": "Waiting for BankID… scan the QR code and approve the login. Leave the QR page open; it shows when the login is done."
+    },
     "error": {
-      "invalid_auth": "InfoMentor rejected the refresh token.",
+      "invalid_auth": "InfoMentor rejected the login.",
       "cannot_connect": "Could not reach InfoMentor.",
       "unknown": "Unexpected response from InfoMentor.",
       "no_children": "Select at least one child.",
-      "wrong_account": "That token belongs to a different InfoMentor account."
+      "wrong_account": "That login belongs to a different InfoMentor account.",
+      "bankid_timeout": "The BankID login timed out. Try again.",
+      "bankid_cancelled": "The BankID login was cancelled or rejected. Try again."
     },
     "abort": {
       "already_configured": "This InfoMentor account is already configured.",
       "reauth_successful": "Reauthentication succeeded.",
-      "reauth_failed": "Could not find the entry to reauthenticate."
+      "reauth_failed": "Could not find the entry to reauthenticate.",
+      "bankid_unavailable": "Could not start the BankID login. Check the connection to InfoMentor and try again."
     }
   },
   "options": {
