@@ -56,6 +56,7 @@ async def test_setup_creates_expected_entities(hass, mock_info_mentor_api) -> No
     assert news is not None
     assert news.state == "Klassresan till Skansen"
     assert news.attributes["published_at"] == "2026-10-26T12:00:00"
+    assert news.attributes["content"]
 
     upcoming = hass.states.get("sensor.ella_nasta_handelse")
     assert upcoming is not None
