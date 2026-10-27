@@ -75,9 +75,11 @@ ALLOWED_HOSTS = frozenset(
 ALLOWED_SUFFIXES = (".infomentor.se", ".stockholm.se")
 
 _PUPIL_SWITCH_PATH = re.compile(
-    r"/Account/PupilSwitcher/SwitchPupil/([^/?#'\"\\]+)", re.I
+    r"/Account/PupilSwitcher/SwitchPupil/([^/?#'\"\\]+)", re.IGNORECASE
 )
-_SELECTED_PUPIL_NAME = re.compile(r"selectedPupilName\s*:\s*'((?:\\.|[^'])*)'", re.I)
+_SELECTED_PUPIL_NAME = re.compile(
+    r"selectedPupilName\s*:\s*'((?:\\.|[^'])*)'", re.IGNORECASE
+)
 
 TokenCallback = Callable[[str], None]
 
@@ -267,7 +269,7 @@ def same_name(first: str, second: str | None) -> bool:
     """Compare pupil display names loosely (order of names may differ)."""
     if second is None:
         return False
-    normalize = lambda value: " ".join(  # noqa: E731 - tiny local helper
+    normalize = lambda value: " ".join(
         value.lower().replace(",", " ").split()
     )
     return normalize(first) == normalize(second)

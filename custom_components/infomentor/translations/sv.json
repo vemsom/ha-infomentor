@@ -3,7 +3,35 @@
     "step": {
       "user": {
         "title": "Anslut till InfoMentor",
-        "description": "Klistra in en OAuth2-refresh-token från InfoMentors mobilgrant. Se integrationens README för hur du skapar en egen token.",
+        "description": "Logga in med BankID. Ingen token behöver klistras in.",
+        "menu_options": {
+          "bankid": "BankID – skanna QR-kod på en annan enhet",
+          "bankid_phone": "BankID – på den här telefonen",
+          "token": "Klistra in refresh-token (avancerat)"
+        }
+      },
+      "reauth": {
+        "title": "InfoMentor avvisade inloggningen",
+        "description": "Autentisera integrationen igen med BankID.",
+        "menu_options": {
+          "bankid": "BankID – skanna QR-kod på en annan enhet",
+          "bankid_phone": "BankID – på den här telefonen",
+          "token": "Klistra in refresh-token (avancerat)"
+        }
+      },
+      "bankid": {
+        "title": "Logga in med BankID",
+        "description": "Öppna [QR-koden i en webbläsare]({qr_url}) och skanna den med BankID på en annan enhet. Länken fungerar bara medan den här dialogen är öppen och stängs när du fortsätter. Har du bara en telefon använder du “på den här telefonen” i stället.",
+        "data": {}
+      },
+      "bankid_phone": {
+        "title": "Logga in med BankID på den här telefonen",
+        "description": "Öppna [inloggningssidan]({qr_url}) på telefonen som har BankID och tryck “Öppna BankID”. Länken fungerar bara medan den här dialogen är öppen.",
+        "data": {}
+      },
+      "token": {
+        "title": "Anslut med refresh-token",
+        "description": "Klistra in en OAuth2-refresh-token från InfoMentors mobilgrant. Behövs bara när BankID inte kan användas.",
         "data": {
           "refresh_token": "Refresh-token"
         }
@@ -14,26 +42,25 @@
         "data": {
           "children": "Barn"
         }
-      },
-      "reauth_confirm": {
-        "title": "Refresh-token avvisades",
-        "description": "InfoMentor accepterar inte längre den sparade refresh-tokenen. Klistra in en ny token för att återuppta uppdateringarna.",
-        "data": {
-          "refresh_token": "Refresh-token"
-        }
       }
     },
+    "progress": {
+      "bankid_scan": "Väntar på BankID… skanna QR-koden och godkänn inloggningen. Låt QR-sidan vara öppen; den visar när inloggningen är klar."
+    },
     "error": {
-      "invalid_auth": "InfoMentor avvisade refresh-tokenen.",
+      "invalid_auth": "InfoMentor avvisade inloggningen.",
       "cannot_connect": "Kunde inte nå InfoMentor.",
       "unknown": "Oväntat svar från InfoMentor.",
       "no_children": "Välj minst ett barn.",
-      "wrong_account": "Token tillhör ett annat InfoMentor-konto."
+      "wrong_account": "Inloggningen tillhör ett annat InfoMentor-konto.",
+      "bankid_timeout": "BankID-inloggningen tog för lång tid. Försök igen.",
+      "bankid_cancelled": "BankID-inloggningen avbröts eller avvisades. Försök igen."
     },
     "abort": {
       "already_configured": "Det här InfoMentor-kontot är redan konfigurerat.",
       "reauth_successful": "Omautentiseringen lyckades.",
-      "reauth_failed": "Kunde inte hitta posten att autentisera om."
+      "reauth_failed": "Kunde inte hitta posten att autentisera om.",
+      "bankid_unavailable": "Kunde inte starta BankID-inloggningen. Kontrollera anslutningen till InfoMentor och försök igen."
     }
   },
   "options": {
