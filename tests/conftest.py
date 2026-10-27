@@ -96,6 +96,7 @@ class FakeInfoMentorHosts:
             web.get("/sso/NECSadc/mbid", self.bankid),
             web.post("/sso/consume", self.consume),
             web.get("/", self.hub_root),
+            web.post("/timetable/timetable/appData", self.hub_app_data),
             web.post("/account/pair/GetAuthenticationData", self.discovery),
             web.get("/Authentication/Authentication/LoginOAuth2", self.authorize),
             web.post("/Authentication/OAuth2/Token", self.token),
@@ -138,6 +139,12 @@ class FakeInfoMentorHosts:
     async def hub_root(self, request: web.Request) -> web.Response:
         assert request.cookies.get("HUBSSO") == "ok"
         return web.Response(text=HUB_PAGE, content_type="text/html")
+
+    async def hub_app_data(self, request: web.Request) -> web.Response:
+        # The real Hub only answers this for an authenticated cookie session.
+        if request.cookies.get("HUBSSO") != "ok":
+            return web.Response(status=302, headers={"Location": "/"})
+        return web.json_response({"items": []})
 
     async def discovery(self, request: web.Request) -> web.Response:
         assert request.cookies.get("HUBSSO") == "ok"

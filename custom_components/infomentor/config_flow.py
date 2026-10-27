@@ -54,9 +54,8 @@ def _new_bankid_session() -> aiohttp.ClientSession:
 
 
 STEP_BANKID = "bankid"
-STEP_BANKID_PHONE = "bankid_phone"
 STEP_TOKEN = "token"
-MENU_OPTIONS = [STEP_BANKID, STEP_BANKID_PHONE, STEP_TOKEN]
+MENU_OPTIONS = [STEP_BANKID, STEP_TOKEN]
 
 # BankID login outcomes that the form can explain, mapped to error keys.
 BANKID_ERRORS = {
@@ -109,12 +108,6 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
         """Show the rotating BankID QR for scanning on another device."""
         return await self._async_bankid_step(STEP_BANKID, user_input)
 
-    async def async_step_bankid_phone(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Offer the same-device BankID link when only one phone is at hand."""
-        return await self._async_bankid_step(STEP_BANKID_PHONE, user_input)
-
     async def _async_bankid_step(
         self, step_id: str, user_input: dict[str, Any] | None
     ) -> ConfigFlowResult:
@@ -125,21 +118,26 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
                 step_id="bankid_wait",
                 progress_action="bankid_scan",
                 progress_task=self._login_task,
+                description_placeholders={"qr_url": self._qr.url if self._qr else ""},
             )
 
         errors: dict[str, str] = {}
         if self._login is None:
             errors = self._bankid_error
             self._bankid_error = {}
-            method = "qr" if step_id == STEP_BANKID else "same_device"
-            if not await self._async_start_bankid(method):
+            if not await self._async_start_bankid("qr"):
                 # Without a BankID order there is no QR to show.
                 return self.async_abort(reason="bankid_unavailable")
+        placeholders = {"qr_url": self._qr.url if self._qr else ""}
+        # The link has to be visible and tappable while the attempt runs, so
+        # the dialog stays on a form. The polling task is already started, so
+        # the button only moves the dialog on; an approval is never missed
+        # because someone forgot to press it.
         return self.async_show_form(
             step_id=step_id,
             data_schema=EMPTY_SCHEMA,
             errors=errors,
-            description_placeholders={"qr_url": self._qr.url if self._qr else ""},
+            description_placeholders=placeholders,
         )
 
     async def _async_start_bankid(self, method: str) -> bool:

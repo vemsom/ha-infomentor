@@ -92,7 +92,11 @@ async def _open_menu(hass, source=config_entries.SOURCE_USER):
 
 
 async def _open_bankid(hass, option="bankid"):
-    """Choose a BankID option and return the QR form."""
+    """Choose a BankID option and return the waiting result.
+
+    The dialog no longer asks for a Submit: choosing the option starts the
+    attempt and hands the user a waiting dialog with the link in it.
+    """
     result = await _open_menu(hass)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"next_step_id": option}
@@ -125,7 +129,7 @@ async def test_menu_offers_bankid_first(hass, mock_info_mentor_api) -> None:
     result = await _open_menu(hass)
 
     assert result["step_id"] == "user"
-    assert list(result["menu_options"]) == ["bankid", "bankid_phone", "token"]
+    assert list(result["menu_options"]) == ["bankid", "token"]
 
 
 async def test_bankid_flow_creates_entry(
@@ -173,19 +177,6 @@ async def test_bankid_flow_children_step(
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_CHILDREN] == [{"id": "pupil-2", "name": "Olle"}]
-
-
-async def test_bankid_phone_flow(hass, mock_info_mentor_api, mock_bankid_login) -> None:
-    """The single-phone variant uses a BankID link instead of a scan."""
-    mock_info_mentor_api.children = [{"id": "pupil-1", "name": "Ella"}]
-    result = await _open_bankid(hass, option="bankid_phone")
-
-    assert result["step_id"] == "bankid_phone"
-    assert "qr_url" in result["description_placeholders"]
-    assert mock_bankid_login.instances[0].method == "same_device"
-
-    result = await _finish_bankid(hass, result["flow_id"])
-    assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
 async def test_bankid_timeout_offers_a_new_qr(
@@ -458,7 +449,7 @@ async def test_reauth_uses_bankid(
     )
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "reauth"
-    assert list(result["menu_options"])[:2] == ["bankid", "bankid_phone"]
+    assert list(result["menu_options"])[:1] == ["bankid"]
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"next_step_id": "bankid"}
