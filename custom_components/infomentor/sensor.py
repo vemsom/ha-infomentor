@@ -97,6 +97,7 @@ class InfoMentorNewsSensor(InfoMentorEntity, SensorEntity):
             "published_at": item.published_at,
             "news_id": item.id,
             "title": item.title,
+            "content": item.content,
         }
 
 
