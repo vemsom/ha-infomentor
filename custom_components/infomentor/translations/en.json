@@ -19,7 +19,7 @@
       },
       "bankid": {
         "title": "Log in with BankID",
-        "description": "Open [the QR code in a browser]({qr_url}) and scan it with BankID on another device. The link only works while this dialog is open and is closed when you continue. If you only have one phone, use the “on this phone” option instead.",
+        "description": "Open [the QR code in a browser]({qr_url}). Scan it with BankID on another device, or press “Open BankID” on that page to approve on the same phone. The link works only while this dialog is open.",
         "data": {}
       },
       "token": {

@@ -19,7 +19,7 @@
       },
       "bankid": {
         "title": "Logga in med BankID",
-        "description": "Öppna [QR-koden i en webbläsare]({qr_url}) och skanna den med BankID på en annan enhet. Länken fungerar bara medan den här dialogen är öppen och stängs när du fortsätter. Har du bara en telefon använder du “på den här telefonen” i stället.",
+        "description": "Öppna [QR-koden i en webbläsare]({qr_url}). Skanna den med BankID på en annan enhet, eller tryck på ”Öppna BankID” på sidan för att godkänna i samma telefon. Länken fungerar bara medan den här dialogen är öppen.",
         "data": {}
       },
       "token": {
