@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to InfoMentor",
+        "description": "Paste an OAuth2 refresh token from the InfoMentor Hub mobile grant. See the integration README for how to create your own token.",
+        "data": {
+          "refresh_token": "Refresh token"
+        }
+      },
+      "children": {
+        "title": "Choose children",
+        "description": "Select which linked children should get entities in Home Assistant.",
+        "data": {
+          "children": "Children"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Refresh token rejected",
+        "description": "InfoMentor no longer accepts the stored refresh token. Paste a newly created token to resume updates.",
+        "data": {
+          "refresh_token": "Refresh token"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "InfoMentor rejected the refresh token.",
+      "cannot_connect": "Could not reach InfoMentor.",
+      "unknown": "Unexpected response from InfoMentor.",
+      "no_children": "Select at least one child.",
+      "wrong_account": "That token belongs to a different InfoMentor account."
+    },
+    "abort": {
+      "already_configured": "This InfoMentor account is already configured.",
+      "reauth_successful": "Reauthentication succeeded.",
+      "reauth_failed": "Could not find the entry to reauthenticate."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "InfoMentor options",
+        "data": {
+          "children": "Children",
+          "include_childcare": "Include the childcare (fritids) schedule"
+        }
+      }
+    },
+    "error": {
+      "no_children": "Select at least one child."
+    }
+  }
+}

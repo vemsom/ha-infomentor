@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anslut till InfoMentor",
+        "description": "Klistra in en OAuth2-refresh-token från InfoMentors mobilgrant. Se integrationens README för hur du skapar en egen token.",
+        "data": {
+          "refresh_token": "Refresh-token"
+        }
+      },
+      "children": {
+        "title": "Välj barn",
+        "description": "Välj vilka länkade barn som ska få entiteter i Home Assistant.",
+        "data": {
+          "children": "Barn"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Refresh-token avvisades",
+        "description": "InfoMentor accepterar inte längre den sparade refresh-tokenen. Klistra in en ny token för att återuppta uppdateringarna.",
+        "data": {
+          "refresh_token": "Refresh-token"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "InfoMentor avvisade refresh-tokenen.",
+      "cannot_connect": "Kunde inte nå InfoMentor.",
+      "unknown": "Oväntat svar från InfoMentor.",
+      "no_children": "Välj minst ett barn.",
+      "wrong_account": "Token tillhör ett annat InfoMentor-konto."
+    },
+    "abort": {
+      "already_configured": "Det här InfoMentor-kontot är redan konfigurerat.",
+      "reauth_successful": "Omautentiseringen lyckades.",
+      "reauth_failed": "Kunde inte hitta posten att autentisera om."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "InfoMentor-inställningar",
+        "data": {
+          "children": "Barn",
+          "include_childcare": "Inkludera fritidsschemat"
+        }
+      }
+    },
+    "error": {
+      "no_children": "Välj minst ett barn."
+    }
+  }
+}
