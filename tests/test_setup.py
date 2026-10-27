@@ -185,7 +185,7 @@ def test_manifest_and_translations_are_valid() -> None:
                 translated.get("menu_options", {})
             )
     # The BankID path is the default; its steps must be translated.
-    for step in ("user", "reauth", "bankid", "token"):
+    for step in ("user", "reauth", "bankid", "bankid_phone", "token"):
         assert step in strings["config"]["step"]
         assert "menu_options" in strings["config"]["step"][step] or step not in (
             "user",

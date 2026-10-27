@@ -63,6 +63,19 @@ async def test_page_and_frame_need_no_auth(hass, hass_client_no_auth, store) -> 
     }
 
 
+async def test_page_polls_the_frame_next_to_itself(
+    hass, hass_client_no_auth, store
+) -> None:
+    """The page asks for its own /frame, so a prefixed or trailing slash works."""
+    session = store.open()
+    client = await hass_client_no_auth()
+    body = await (await client.get(urlsplit(session.url).path)).text()
+
+    assert "location.pathname+'/frame'" in body
+    # No leftover hook for the removed same-device button.
+    assert "getElementById('open')" not in body
+
+
 async def test_update_publishes_the_rotating_qr(
     hass, hass_client_no_auth, store
 ) -> None:
@@ -83,7 +96,7 @@ async def test_update_publishes_the_rotating_qr(
 
 
 async def test_closed_session_is_gone(hass, hass_client_no_auth, store) -> None:
-    """After closing, both URLs are 404 and the token is forgotten."""
+    """After closing, the page says it is spent and the frame is gone."""
     session = store.open()
     client = await hass_client_no_auth()
     path = urlsplit(session.url).path
@@ -91,7 +104,10 @@ async def test_closed_session_is_gone(hass, hass_client_no_auth, store) -> None:
 
     session.close()
 
-    assert (await client.get(path)).status == 404
+    spent = await client.get(path)
+    assert spent.status == 410
+    # The page explains itself instead of handing over Home Assistant's frontend.
+    assert "förbrukad" in await spent.text()
     assert (await client.get(path + "/frame")).status == 404
     assert path.rsplit("/", 1)[-1] not in store.entries
 
@@ -99,7 +115,7 @@ async def test_closed_session_is_gone(hass, hass_client_no_auth, store) -> None:
 async def test_unknown_token_is_not_served(hass, hass_client_no_auth, store) -> None:
     """A guessed or stale path never leaks a page."""
     client = await hass_client_no_auth()
-    assert (await client.get(f"{BASE_PATH}/not-a-real-token")).status == 404
+    assert (await client.get(f"{BASE_PATH}/not-a-real-token")).status == 410
     assert (await client.get(f"{BASE_PATH}/not-a-real-token/frame")).status == 404
 
 

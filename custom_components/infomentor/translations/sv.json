@@ -6,7 +6,8 @@
         "description": "Logga in med BankID. Ingen token behöver klistras in.",
         "menu_options": {
           "bankid": "BankID – skanna QR-kod på en annan enhet",
-          "token": "Klistra in refresh-token (avancerat)"
+          "token": "Klistra in refresh-token (avancerat)",
+          "bankid_phone": "BankID – på den här telefonen"
         }
       },
       "reauth": {
@@ -14,7 +15,8 @@
         "description": "Autentisera integrationen igen med BankID.",
         "menu_options": {
           "bankid": "BankID – skanna QR-kod på en annan enhet",
-          "token": "Klistra in refresh-token (avancerat)"
+          "token": "Klistra in refresh-token (avancerat)",
+          "bankid_phone": "BankID – på den här telefonen"
         }
       },
       "bankid": {
@@ -39,6 +41,10 @@
       "bankid_wait": {
         "title": "Bekräfta i BankID",
         "description": "Öppna [inloggningssidan]({qr_url}) och scanna koden med BankID i telefonen. Dialogen går vidare av sig själv när du godkänt."
+      },
+      "bankid_phone": {
+        "title": "Logga in med BankID på den här telefonen",
+        "description": "Tryck på [Öppna BankID]({launch_url}) och godkänn. Öppnas inte appen, använd [QR-sidan]({qr_url}) i stället."
       }
     },
     "progress": {
