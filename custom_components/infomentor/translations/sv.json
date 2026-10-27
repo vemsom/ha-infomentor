@@ -6,7 +6,6 @@
         "description": "Logga in med BankID. Ingen token behöver klistras in.",
         "menu_options": {
           "bankid": "BankID – skanna QR-kod på en annan enhet",
-          "bankid_phone": "BankID – på den här telefonen",
           "token": "Klistra in refresh-token (avancerat)"
         }
       },
@@ -15,18 +14,12 @@
         "description": "Autentisera integrationen igen med BankID.",
         "menu_options": {
           "bankid": "BankID – skanna QR-kod på en annan enhet",
-          "bankid_phone": "BankID – på den här telefonen",
           "token": "Klistra in refresh-token (avancerat)"
         }
       },
       "bankid": {
         "title": "Logga in med BankID",
         "description": "Öppna [QR-koden i en webbläsare]({qr_url}) och skanna den med BankID på en annan enhet. Länken fungerar bara medan den här dialogen är öppen och stängs när du fortsätter. Har du bara en telefon använder du “på den här telefonen” i stället.",
-        "data": {}
-      },
-      "bankid_phone": {
-        "title": "Logga in med BankID på den här telefonen",
-        "description": "Öppna [inloggningssidan]({qr_url}) på telefonen som har BankID och tryck “Öppna BankID”. Länken fungerar bara medan den här dialogen är öppen.",
         "data": {}
       },
       "token": {
@@ -42,10 +35,14 @@
         "data": {
           "children": "Barn"
         }
+      },
+      "bankid_wait": {
+        "title": "Bekräfta i BankID",
+        "description": "Öppna [inloggningssidan]({qr_url}) och scanna koden med BankID i telefonen. Dialogen går vidare av sig själv när du godkänt."
       }
     },
     "progress": {
-      "bankid_scan": "Väntar på BankID… skanna QR-koden och godkänn inloggningen. Låt QR-sidan vara öppen; den visar när inloggningen är klar."
+      "bankid_scan": "Väntar på ditt godkännande i BankID…"
     },
     "error": {
       "invalid_auth": "InfoMentor avvisade inloggningen.",

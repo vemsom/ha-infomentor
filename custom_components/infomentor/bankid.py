@@ -30,16 +30,35 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from html import unescape
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import aiohttp
+
+_LOGGER = logging.getLogger(__name__)
+
+# Temporary: Home Assistant's in-memory log is not readable from the add-on, so
+# the login writes its short state sequence to a file while we debug live.
+TRACE_FILE = "/config/infomentor-login.log"
+
+
+def _trace(message: str) -> None:
+    """Append one line to the login trace (no secrets, state names only)."""
+    try:
+        with open(TRACE_FILE, "a", encoding="utf-8") as handle:
+            handle.write(f"{time.strftime('%H:%M:%S')} {message}\n")
+    except OSError:
+        pass
+
 
 from .api import (
     HTML_HEADERS,
@@ -74,6 +93,35 @@ CALLBACK_HOST = "oauth2callback"
 DEVICE_PLATFORM = "Android"
 DEVICE_NAME = "Home Assistant"
 BANKID_STATES = frozenset({"PENDING", "USER_SIGN", "OK", "ERROR", "CANCELLED"})
+HUB_HOST = urlsplit(HUB_ORIGIN).netloc
+
+_META_REFRESH = re.compile(
+    r"""<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["'][^"']*url=([^"'\s>]+)""",
+    re.IGNORECASE,
+)
+_JS_LOCATION = re.compile(
+    r"""location(?:\.href)?\s*=\s*["']([^"']+)["']""", re.IGNORECASE
+)
+
+
+def _dump_page(html: str) -> None:
+    """Keep the last unparsed sign-in page for inspection (his own machine)."""
+    try:
+        with open("/config/infomentor-page.html", "w", encoding="utf-8") as handle:
+            handle.write(html[:200000])
+    except OSError:
+        pass
+
+
+def find_client_redirect(html: str) -> str | None:
+    """Return a meta-refresh or JavaScript redirect target, if the page has one."""
+    for pattern in (_META_REFRESH, _JS_LOCATION):
+        match = pattern.search(html)
+        if match:
+            return match.group(1)
+    return None
+
+
 REJECTED_STATES = frozenset({"ERROR", "CANCELLED"})
 
 # A BankID order that is never scanned expires in about 30 seconds, but the
@@ -260,7 +308,14 @@ class BankIdProtocol:
             raise BankIdProtocolError("No BankID order to poll")
         separator = "&" if "?" in self._page_url else "?"
         query = urlencode({"verifyorder": self._order, "_": int(time.time() * 1000)})
-        reply = await self._request("GET", f"{self._page_url}{separator}{query}")
+        reply = await self._request(
+            "GET",
+            f"{self._page_url}{separator}{query}",
+            headers={
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json",
+            },
+        )
         if reply.status >= 400:
             raise InfoMentorConnectionError(
                 f"InfoMentor BankID poll returned HTTP {reply.status}"
@@ -286,21 +341,65 @@ class BankIdProtocol:
         if self._page_url is None:
             raise BankIdProtocolError("No BankID order to finish")
         reply = await self._request("GET", self._page_url, headers=HTML_HEADERS)
+        _trace(f"finish start {urlsplit(reply.url).netloc} {reply.status}")
+        settle = 0
         for _ in range(MAX_SSO_HOPS):
             if reply.status in REDIRECT_STATUSES:
                 location = reply.headers.get("Location")
                 if not location:
                     raise BankIdProtocolError("Sign-in redirect had no destination")
-                reply = await self._request(
-                    "GET", validate_url(location, reply.url), headers=HTML_HEADERS
+                target = validate_url(location, reply.url)
+                _trace(
+                    f"hop {reply.status} -> {urlsplit(target).netloc}{urlsplit(target).path[:60]}"
                 )
+                reply = await self._request("GET", target, headers=HTML_HEADERS)
                 continue
             if reply.status >= 400:
                 raise InfoMentorConnectionError(
                     f"InfoMentor sign-in returned HTTP {reply.status}"
                 )
-            form = find_saml_form(reply.text())
+            text = reply.text()
+            form = find_saml_form(text)
+            netloc = urlsplit(reply.url).netloc
+            _trace(
+                f"page {netloc}{urlsplit(reply.url).path[:40]} {reply.status} "
+                f"form={'yes' if form else 'no'} len={len(reply.body)} "
+                f"saml={'SAML' in text} meta={'http-equiv' in text.lower()} "
+                f"js={'location' in text.lower()} forms={text.lower().count('<form')}"
+            )
+            if form is None and netloc.endswith(HUB_HOST):
+                return
             if form is None:
+                # Stockholm's SSO ends on a "continue" page whose single form
+                # carries the next hop. It is not a SAML form, but posting it
+                # is what the browser does.
+                forms = parse_forms(text)
+                _trace(
+                    f"parsed forms={len(forms)} actions={[urlsplit(f.action).path[:30] for f in forms]}"
+                )
+                if len(forms) == 1 and forms[0].action:
+                    form = forms[0]
+                    _trace(
+                        "single form used fields=" + ",".join(sorted(form.fields))[:80]
+                    )
+            if form is None:
+                _dump_page(text)
+                location = find_client_redirect(text)
+                _trace(f"client redirect={bool(location)}")
+                if location is not None:
+                    _trace("client-side redirect followed")
+                    reply = await self._request(
+                        "GET", validate_url(location, reply.url), headers=HTML_HEADERS
+                    )
+                    continue
+                # The SSO sometimes hands back an intermediate page that only
+                # turns into the next hop a moment later.
+                if settle < 2:
+                    settle += 1
+                    await asyncio.sleep(3.0)
+                    _trace("retry same page")
+                    reply = await self._request("GET", reply.url, headers=HTML_HEADERS)
+                    continue
                 return
             reply = await self._request(
                 "POST",
@@ -311,16 +410,41 @@ class BankIdProtocol:
         raise BankIdProtocolError("InfoMentor sign-in chain exceeded its hop limit")
 
     async def async_verify_session(self) -> list[str]:
-        """Prove the new session by reading the Hub's linked pupils."""
-        reply = await self._request("GET", HUB_ORIGIN + "/", headers=HTML_HEADERS)
+        """Prove the new session the way the working client does.
+
+        A read of the Hub page proves nothing on its own: it answers 200 with an
+        empty shell when there is no session. The timetable endpoint only
+        returns data to an authenticated cookie, so that is the real gate.
+        """
+        today = datetime.now(ZoneInfo("Europe/Stockholm")).date()
+        reply = await self._request(
+            "POST",
+            HUB_ORIGIN + "/timetable/timetable/appData",
+            json={
+                "startDate": today.isoformat(),
+                "endDate": (today + timedelta(days=1)).isoformat(),
+            },
+            headers={
+                "Accept": "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        )
+        _trace(f"verify appData {reply.status} len={len(reply.body)}")
         if reply.status != 200:
             raise BankIdProtocolError(
                 "The new BankID session was not accepted by the Hub "
                 f"(HTTP {reply.status})"
             )
-        child_ids = parse_child_ids(reply.text())
-        if not child_ids:
-            raise BankIdProtocolError("The new BankID session listed no linked pupils")
+        try:
+            payload = reply.json()
+        except BankIdProtocolError:
+            raise BankIdProtocolError("The Hub answered with something other than JSON")
+        if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            raise BankIdProtocolError("The Hub did not return timetable data")
+
+        page = await self._request("GET", HUB_ORIGIN + "/", headers=HTML_HEADERS)
+        child_ids = parse_child_ids(page.text()) if page.status == 200 else []
+        _trace(f"verify pupils={len(child_ids)}")
         return child_ids
 
     # -- app grant ---------------------------------------------------------- #
@@ -508,6 +632,8 @@ class BankIdLogin:
                 while True:
                     await asyncio.sleep(self._interval)
                     state = await protocol.async_poll()
+                    _LOGGER.debug("BankID poll state: %s", state)
+                    _trace(f"poll {state}")
                     if state == "OK":
                         break
                     if state in REJECTED_STATES:
@@ -518,11 +644,27 @@ class BankIdLogin:
             self.qr_data = None
             self.status = "verifying"
             self._notify()
+            _trace("approved")
+            # The page's own script keeps the XHR poll going until it sees OK
+            # and then reloads. One more poll after OK is what flips the SSO
+            # session, and the reload needs the same three seconds the page
+            # waits before it navigates.
+            try:
+                await protocol.async_poll()
+                _trace("poll after ok")
+            except InfoMentorError:
+                _trace("poll after ok failed")
+            await asyncio.sleep(3.5)
             await protocol.async_finish()
+            _trace("saml ok")
             await protocol.async_verify_session()
+            _trace("session ok")
             await protocol.async_discover()
+            _trace("discovery ok")
             code = await protocol.async_authorize(device_name=self._device_name)
+            _trace("authorized")
             await protocol.async_exchange(code)
+            _trace("tokens ok")
             self.refresh_token = protocol.refresh_token
             self.status = "complete"
         except TimeoutError:
@@ -533,12 +675,18 @@ class BankIdLogin:
             self._notify()
             raise
         except BankIdRejectedError:
+            _trace("rejected by BankID")
             self.status, self.error = "cancelled", "cancelled"
         except BankIdTokenError:
+            _trace("token exchange failed")
             self.status, self.error = "failed", "invalid_auth"
         except InfoMentorConnectionError:
             self.status, self.error = "failed", "connection"
         except InfoMentorError:
+            _trace("infomentor error")
+            self.status, self.error = "failed", "failed"
+        except Exception:  # never leave the dialog spinning
+            _LOGGER.exception("BankID login stopped on an unexpected error")
             self.status, self.error = "failed", "failed"
         finally:
             self.qr_data = None

@@ -6,7 +6,6 @@
         "description": "Log in with BankID. No token needs to be copied.",
         "menu_options": {
           "bankid": "BankID – scan a QR code on another device",
-          "bankid_phone": "BankID – on this phone",
           "token": "Paste a refresh token (advanced)"
         }
       },
@@ -15,18 +14,12 @@
         "description": "Authorise the integration again with BankID.",
         "menu_options": {
           "bankid": "BankID – scan a QR code on another device",
-          "bankid_phone": "BankID – on this phone",
           "token": "Paste a refresh token (advanced)"
         }
       },
       "bankid": {
         "title": "Log in with BankID",
         "description": "Open [the QR code in a browser]({qr_url}) and scan it with BankID on another device. The link only works while this dialog is open and is closed when you continue. If you only have one phone, use the “on this phone” option instead.",
-        "data": {}
-      },
-      "bankid_phone": {
-        "title": "Log in with BankID on this phone",
-        "description": "Open [the login page]({qr_url}) on the phone that has BankID and tap “Öppna BankID”. The link only works while this dialog is open.",
         "data": {}
       },
       "token": {
@@ -42,10 +35,14 @@
         "data": {
           "children": "Children"
         }
+      },
+      "bankid_wait": {
+        "title": "Confirm in BankID",
+        "description": "Open [the login page]({qr_url}) and scan the code with BankID on your phone. The dialog continues by itself when you approve."
       }
     },
     "progress": {
-      "bankid_scan": "Waiting for BankID… scan the QR code and approve the login. Leave the QR page open; it shows when the login is done."
+      "bankid_scan": "Waiting for your approval in BankID…"
     },
     "error": {
       "invalid_auth": "InfoMentor rejected the login.",
