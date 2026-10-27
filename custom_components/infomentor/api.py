@@ -269,9 +269,7 @@ def same_name(first: str, second: str | None) -> bool:
     """Compare pupil display names loosely (order of names may differ)."""
     if second is None:
         return False
-    normalize = lambda value: " ".join(
-        value.lower().replace(",", " ").split()
-    )
+    normalize = lambda value: " ".join(value.lower().replace(",", " ").split())
     return normalize(first) == normalize(second)
 
 

@@ -329,14 +329,14 @@ class BankIdProtocol:
         """Read the app authorization reference from the Hub session."""
         reply = await self._request("POST", HUB_ORIGIN + DISCOVERY_PATH, data=b"")
         if reply.status != 200:
-            raise BankIdProtocolError(
-                f"Mobile discovery returned HTTP {reply.status}"
-            )
+            raise BankIdProtocolError(f"Mobile discovery returned HTTP {reply.status}")
         try:
             payload = reply.json()
             if not isinstance(payload, dict):
                 raise _InvalidPayload("Not an object")
-            if not _endpoint_matches(payload["authenticationUrl"], AUTH_ORIGIN, AUTH_PATH):
+            if not _endpoint_matches(
+                payload["authenticationUrl"], AUTH_ORIGIN, AUTH_PATH
+            ):
                 raise _InvalidPayload("Unexpected authorization endpoint")
             if not _endpoint_matches(payload["tokenUrl"], AUTH_ORIGIN, TOKEN_PATH):
                 raise _InvalidPayload("Unexpected token endpoint")
@@ -462,7 +462,9 @@ class BankIdLogin:
         timeout: float = LOGIN_TIMEOUT,
         interval: float = POLL_INTERVAL,
         on_update: UpdateCallback | None = None,
-        protocol_factory: Callable[[aiohttp.ClientSession], BankIdProtocol] = BankIdProtocol,
+        protocol_factory: Callable[
+            [aiohttp.ClientSession], BankIdProtocol
+        ] = BankIdProtocol,
     ) -> None:
         self._session = session
         self._method = method
