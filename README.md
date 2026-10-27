@@ -327,3 +327,24 @@ att QR-sidan går att nå från telefonen via den konfigurerade URL:en (särskil
 bakom reverse proxy), att fältnamnen i kalender/fritidssvar stämmer med dagens
 API, och hur länge refresh-tokenen lever.
 
+
+## Öppet: BankID-inloggningen i HA
+
+QR-flödet fungerar fram till godkännandet: sidan visar en giltig kod, BankID
+approverar ordern (pollningen når `OK`). Därefter laddas sidan om och Stockholms
+SSO svarar med **BankID:s väljarsida** (`login003.stockholm.se/…/NECSadcmbid`,
+28 801 tecken, inget SAML-formulär) i stället för en autentiserad session, och
+Hubben svarar 302 på `timetable/timetable/appData`.
+
+Samma utfall gäller den dedikerade samma-enhet-ordern (`initialize=url`), och
+även den externa referensklienten (`infomentor-mcp auth login --method url`)
+misslyckas. Det pekar på överlämningen BankID → SiteMinder, inte på HA-porten.
+
+Att göra:
+- jämför anropet som *avslutar* inloggningen med `infomentor-mcp`
+  (`auth/stockholm_bankid.py:finish`) rad för rad — särskilt om SSO:n kräver
+  ytterligare ett `verifyorder`-poll innan omladdning, eller en annan URL än
+  den utan parametrar,
+- fråga Wictor om han någonsin får väljarsidan efter ett godkänt försök,
+- verifiera på en andra skärm när sådan finns; tills dess kör HA på en lånad
+  refresh-token som delas med `infomentor-mcp` (de kan rotera ut varandra).
