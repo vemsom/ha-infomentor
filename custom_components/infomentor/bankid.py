@@ -128,6 +128,7 @@ REJECTED_STATES = frozenset({"ERROR", "CANCELLED"})
 # whole attempt (start, scan, approve, SAML, grant) gets the same budget as
 # the reference implementation.
 LOGIN_TIMEOUT = 240
+MAX_RENEWALS = 6
 START_TIMEOUT = 30
 POLL_INTERVAL = 1.0
 
@@ -195,6 +196,8 @@ class BankIdProtocol:
     def __init__(self, session: aiohttp.ClientSession) -> None:
         self._session = session
         self._page_url: str | None = None
+        self._start_url: str | None = None
+        self._method = "qr"
         self._order: str | None = None
         self.qr_data: str | None = None
         self.launch_url: str | None = None
@@ -218,6 +221,13 @@ class BankIdProtocol:
                 headers=headers,
                 **kwargs,
             ) as response:
+                cookies = response.headers.getall("Set-Cookie", [])
+                if cookies:
+                    names = [c.split("=", 1)[0].strip() for c in cookies]
+                    _trace(
+                        f"cookie {urlsplit(str(response.url)).netloc} "
+                        f"{response.status} {names}"
+                    )
                 return _Reply(
                     status=response.status,
                     headers=response.headers,
@@ -274,9 +284,11 @@ class BankIdProtocol:
         else:
             raise BankIdProtocolError("InfoMentor SSO exceeded its redirect limit")
 
+        self._method = method
         initialize = "qr" if method == "qr" else "url"
         separator = "&" if "?" in url else "?"
-        reply = await self._request("GET", f"{url}{separator}initialize={initialize}")
+        self._start_url = f"{url}{separator}initialize={initialize}"
+        reply = await self._request("GET", self._start_url)
         if reply.status >= 400:
             raise InfoMentorConnectionError(
                 f"InfoMentor BankID start returned HTTP {reply.status}"
@@ -314,6 +326,7 @@ class BankIdProtocol:
             headers={
                 "X-Requested-With": "XMLHttpRequest",
                 "Accept": "application/json",
+                "Referer": self._page_url,
             },
         )
         if reply.status >= 400:
@@ -340,8 +353,13 @@ class BankIdProtocol:
         """Follow the SAML chain that follows an approved BankID order."""
         if self._page_url is None:
             raise BankIdProtocolError("No BankID order to finish")
-        reply = await self._request("GET", self._page_url, headers=HTML_HEADERS)
-        _trace(f"finish start {urlsplit(reply.url).netloc} {reply.status}")
+        # The page's own script polls by AJAX, so its address bar keeps the
+        # bare page URL; that is what a reload requests too.
+        first_url = self._page_url
+        headers = dict(HTML_HEADERS)
+        headers["Referer"] = self._page_url
+        reply = await self._request("GET", first_url, headers=headers)
+        _trace(f"finish start {urlsplit(reply.url).netloc} {reply.status} (start-url)")
         settle = 0
         for _ in range(MAX_SSO_HOPS):
             if reply.status in REDIRECT_STATUSES:
@@ -628,6 +646,7 @@ class BankIdLogin:
             self.status, self.error = "failed", "failed"
             return
         try:
+            renewals = 0
             async with asyncio.timeout(self._timeout):
                 while True:
                     await asyncio.sleep(self._interval)
@@ -637,6 +656,20 @@ class BankIdLogin:
                     if state == "OK":
                         break
                     if state in REJECTED_STATES:
+                        # Stockholm drops an unscanned order after about
+                        # thirty seconds. Rather than kill the page while the
+                        # user is still fetching a second screen, start a new
+                        # order and keep the same one-time link alive.
+                        if renewals < MAX_RENEWALS:
+                            renewals += 1
+                            _trace(f"order ended ({state}); starting a new one")
+                            self.qr_data = None
+                            self._notify()
+                            await protocol.async_begin(self._method)
+                            self.qr_data = protocol.qr_data
+                            self.launch_url = protocol.launch_url
+                            self._notify()
+                            continue
                         raise BankIdRejectedError("BankID order was not approved")
                     self.qr_data = protocol.qr_data
                     self.status = "user_sign" if state == "USER_SIGN" else "waiting"

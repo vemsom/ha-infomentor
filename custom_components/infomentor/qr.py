@@ -20,6 +20,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
+from .bankid import _trace
 from .qrcodegen import QrCode
 
 BASE_PATH = "/api/infomentor/bankid"
@@ -144,8 +145,28 @@ class BankIdQrView(HomeAssistantView):
     async def get(self, request: web.Request, token: str) -> web.Response:
         """Return the page, or the current QR frame, for a live path."""
         entry = self._store.entries.get(token)
+        # Live debugging: the add-on cannot read Home Assistant's in-memory log,
+        # so a page hit is written to the same trace file as the login states.
+        _trace(
+            f"page-hit token={token[:6]} known={entry is not None} "
+            f"ua={request.headers.get('User-Agent', '')[:40]}"
+        )
         if entry is None:
-            raise web.HTTPNotFound()
+            if request.path.endswith("/frame"):
+                raise web.HTTPNotFound()
+            # A 404 would make Home Assistant serve its own frontend, which
+            # looks like "the link just went to the dashboard". Say what
+            # actually happened instead.
+            return web.Response(
+                text=_closed_page(),
+                content_type="text/html",
+                charset="utf-8",
+                status=410,
+                headers={
+                    **SECURITY_HEADERS,
+                    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+                },
+            )
         nonce = secrets.token_urlsafe(18)
         if request.path.endswith("/frame"):
             return web.json_response(
@@ -174,6 +195,20 @@ class BankIdQrView(HomeAssistantView):
         )
 
 
+def _closed_page() -> str:
+    """Explain a spent link instead of falling through to the dashboard."""
+    return """<!doctype html><html lang="sv"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>InfoMentor – länken är förbrukad</title><style>
+body{font:18px/1.5 system-ui,sans-serif;text-align:center;margin:2rem;color:#111}
+h1{font-size:1.25rem} p{color:#555}
+</style>
+<h1>Länken är förbrukad</h1>
+<p>Inloggningsförsöket är avslutat eller har gått ut. Gå tillbaka till Home
+Assistant och välj BankID igen – då skapas en ny länk.</p></html>"""
+
+
 def _page(nonce: str) -> str:
     """Return the whole page: a canvas, a status line and nothing else."""
     return f"""<!doctype html><html lang="sv"><meta charset="utf-8">
@@ -196,15 +231,14 @@ complete:'Klart – gå tillbaka till Home Assistant',cancelled:'Inloggningen av
 timeout:'Tiden gick ut – försök igen i Home Assistant',failed:'Inloggningen misslyckades',
 closed:'Sidan är stängd – gå tillbaka till Home Assistant'}};
 const canvas=document.getElementById('qr'),ctx=canvas.getContext('2d'),
-status=document.getElementById('status'),open=document.getElementById('open');
-let link=null;
+status=document.getElementById('status');
 const QUIET=4;
 function draw(m){{ctx.fillStyle='#fff';ctx.fillRect(0,0,600,600);
  if(!m)return; const n=m.length,s=600/(n+2*QUIET);ctx.fillStyle='#000';
  for(let y=0;y<n;y++)for(let x=0;x<n;x++)if(m[y][x])
   ctx.fillRect(Math.floor((x+QUIET)*s),Math.floor((y+QUIET)*s),Math.ceil(s),Math.ceil(s));}}
 async function tick(){{try{{
- const r=await fetch('frame',{{cache:'no-store'}}); if(!r.ok)throw new Error();
+ const r=await fetch(location.pathname+'/frame',{{cache:'no-store'}}); if(!r.ok)throw new Error();
  const d=await r.json(); status.textContent=labels[d.status]||'Väntar…';
  draw(d.matrix);
  

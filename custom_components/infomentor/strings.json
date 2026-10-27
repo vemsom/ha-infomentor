@@ -6,7 +6,8 @@
         "description": "Log in with BankID. No token needs to be copied.",
         "menu_options": {
           "bankid": "BankID – scan a QR code on another device",
-          "token": "Paste a refresh token (advanced)"
+          "token": "Paste a refresh token (advanced)",
+          "bankid_phone": "BankID – on this phone"
         }
       },
       "reauth": {
@@ -14,7 +15,8 @@
         "description": "Authorise the integration again with BankID.",
         "menu_options": {
           "bankid": "BankID – scan a QR code on another device",
-          "token": "Paste a refresh token (advanced)"
+          "token": "Paste a refresh token (advanced)",
+          "bankid_phone": "BankID – on this phone"
         }
       },
       "bankid": {
@@ -39,6 +41,10 @@
       "bankid_wait": {
         "title": "Confirm in BankID",
         "description": "Open [the login page]({qr_url}) and scan the code with BankID on your phone. The dialog continues by itself when you approve."
+      },
+      "bankid_phone": {
+        "title": "Log in with BankID on this phone",
+        "description": "Tap [Open BankID]({launch_url}) and approve. If the link does not open the app, use [the QR page]({qr_url}) instead."
       }
     },
     "progress": {

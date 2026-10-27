@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import ClassVar
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import aiohttp
 import pytest
@@ -129,7 +129,7 @@ async def test_menu_offers_bankid_first(hass, mock_info_mentor_api) -> None:
     result = await _open_menu(hass)
 
     assert result["step_id"] == "user"
-    assert list(result["menu_options"]) == ["bankid", "token"]
+    assert list(result["menu_options"]) == ["bankid", "bankid_phone", "token"]
 
 
 async def test_bankid_flow_creates_entry(
@@ -161,7 +161,7 @@ async def test_bankid_flow_creates_entry(
     }
     assert mock_bankid_login.instances[0].method == "qr"
     # The QR path is closed and forgotten as soon as the attempt is over.
-    assert (await client.get(qr_path)).status == 404
+    assert (await client.get(qr_path)).status == 410
 
 
 async def test_bankid_flow_children_step(
@@ -200,7 +200,7 @@ async def test_bankid_timeout_offers_a_new_qr(
     assert not hass.config_entries.async_entries(DOMAIN)
 
     client = await hass_client_no_auth()
-    assert (await client.get(first_path)).status == 404
+    assert (await client.get(first_path)).status == 410
 
 
 async def test_bankid_cancelled_shows_an_error(
@@ -258,7 +258,7 @@ async def test_abandoned_flow_closes_the_qr_path(
     hass.config_entries.flow.async_abort(result["flow_id"])
     await hass.async_block_till_done()
 
-    assert (await client.get(qr_path)).status == 404
+    assert (await client.get(qr_path)).status == 410
 
 
 async def test_bankid_rejects_a_duplicate_account(
@@ -320,7 +320,100 @@ async def test_bankid_flow_with_the_real_login_chain(
     assert fake.token_requests[0]["grant_type"] == "authorization_code"
     assert fake.token_requests[0]["code"] == "CODE1"
     # The QR path dies with the flow.
-    assert (await client.get(qr_path)).status == 404
+    assert (await client.get(qr_path)).status == 410
+
+
+# -- BankID on this phone (autostart link) ---------------------------------- #
+
+
+async def test_bankid_phone_step_offers_the_autostart_link(
+    hass, mock_info_mentor_api, mock_bankid_login
+) -> None:
+    """The single-phone option hands the app link to the waiting dialog."""
+    mock_info_mentor_api.children = [{"id": "pupil-1", "name": "Ella"}]
+    gate = asyncio.Event()
+    mock_bankid_login.gate = gate
+    result = await _open_bankid(hass, option="bankid_phone")
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "bankid_phone"
+    # The order is started in the same-device mode, not as a QR order.
+    assert mock_bankid_login.instances[0].method == "same_device"
+    placeholders = result["description_placeholders"]
+    launch = urlsplit(placeholders["launch_url"])
+    assert launch.scheme == "https" and launch.netloc == "app.bankid.com"
+    assert parse_qs(launch.query) == {
+        "autostarttoken": ["T"],
+        "redirect": ["null"],
+    }
+    # The QR page stays reachable as the fallback the string links to.
+    assert placeholders["qr_url"]
+
+    gate.set()
+    result = await _finish_bankid(hass, result["flow_id"])
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        CONF_REFRESH_TOKEN: "QRREFRESH",
+        CONF_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
+    }
+
+
+async def test_qr_step_publishes_no_autostart_link(
+    hass, mock_info_mentor_api, mock_bankid_login
+) -> None:
+    """The scanning path offers the QR page and no app link."""
+    mock_info_mentor_api.children = [{"id": "pupil-1", "name": "Ella"}]
+    gate = asyncio.Event()
+    mock_bankid_login.gate = gate
+    result = await _open_bankid(hass)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "bankid"
+    assert mock_bankid_login.instances[0].method == "qr"
+    # An empty placeholder, never a dangling Markdown link.
+    assert result["description_placeholders"]["launch_url"] == ""
+    assert result["description_placeholders"]["qr_url"]
+
+    gate.set()
+    result = await _finish_bankid(hass, result["flow_id"])
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+async def test_bankid_phone_flow_with_the_real_login_chain(
+    hass, mock_info_mentor_api, fake_hosts, monkeypatch
+) -> None:
+    """The same-device chain asks the SSO for an autostart token (initialize=url)."""
+    fake, _client = fake_hosts
+    mock_info_mentor_api.children = [{"id": "pupil-1", "name": "Ella"}]
+
+    from custom_components.infomentor import config_flow
+
+    monkeypatch.setattr(
+        config_flow,
+        "_new_bankid_session",
+        lambda: aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)),
+    )
+
+    result = await _open_menu(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "bankid_phone"}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "bankid_phone"
+    assert fake.initialize_calls == ["url"]
+    launch = urlsplit(result["description_placeholders"]["launch_url"])
+    assert parse_qs(launch.query)["autostarttoken"] == ["AUTOSTART"]
+
+    result = await _finish_bankid(hass, result["flow_id"])
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        CONF_REFRESH_TOKEN: "REFRESH",
+        CONF_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
+    }
+    assert fake.token_requests[0]["code"] == "CODE1"
 
 
 # -- refresh token (advanced) ----------------------------------------------- #
@@ -451,7 +544,7 @@ async def test_reauth_uses_bankid(
     )
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "reauth"
-    assert list(result["menu_options"])[:1] == ["bankid"]
+    assert list(result["menu_options"])[:2] == ["bankid", "bankid_phone"]
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"next_step_id": "bankid"}
@@ -467,7 +560,7 @@ async def test_reauth_uses_bankid(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data[CONF_REFRESH_TOKEN] == "QRREFRESH"
-    assert (await client.get(qr_path)).status == 404
+    assert (await client.get(qr_path)).status == 410
 
 
 async def test_reauth_flow_updates_token(hass, mock_info_mentor_api) -> None:

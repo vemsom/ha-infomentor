@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from custom_components.infomentor.bankid import (
+    MAX_RENEWALS,
     BankIdLogin,
     BankIdProtocol,
     BankIdProtocolError,
@@ -88,6 +89,38 @@ async def test_same_device_order_returns_an_autostart_link(fake_hosts) -> None:
         "autostarttoken": ["AUTOSTART"],
         "redirect": ["null"],
     }
+
+
+async def test_login_renews_an_expired_order(fake_hosts) -> None:
+    """An order the bank dropped is replaced, not reported as a rejection.
+
+    Stockholm ends an unscanned order after about thirty seconds; the user may
+    still be picking up a second screen, so the attempt gets a new order.
+    """
+    fake, client = fake_hosts
+    fake.states = ["ERROR", "USER_SIGN", "OK"]
+    login = BankIdLogin(client.session, interval=0.01)
+    await login.async_start()
+    await login.async_wait()
+
+    assert fake.orders == 2
+    assert login.status == "complete"
+    assert login.error is None
+    assert login.refresh_token == "REFRESH"
+
+
+async def test_login_gives_up_after_the_renewal_cap(fake_hosts) -> None:
+    """A bank that keeps dropping orders ends as a rejection, not a loop."""
+    fake, client = fake_hosts
+    fake.states = ["ERROR"] * (MAX_RENEWALS + 2)
+    login = BankIdLogin(client.session, interval=0.01)
+    await login.async_start()
+    await login.async_wait()
+
+    assert fake.orders == MAX_RENEWALS + 1
+    assert login.status == "cancelled"
+    assert login.error == "cancelled"
+    assert login.refresh_token is None
 
 
 async def test_login_saves_only_the_refresh_token(fake_hosts) -> None:
