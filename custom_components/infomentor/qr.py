@@ -66,6 +66,7 @@ class QrSession:
         """Publish a new QR payload and status for the page."""
         self.entry.status = status
         self.entry.launch_url = launch_url
+
         if qr_data is None:
             self.entry.matrix = None
             return
@@ -159,7 +160,7 @@ class BankIdQrView(HomeAssistantView):
                 },
             )
         return web.Response(
-            text=_page(nonce, entry.launch_url is not None),
+            text=_page(nonce),
             content_type="text/html",
             charset="utf-8",
             headers={
@@ -173,13 +174,8 @@ class BankIdQrView(HomeAssistantView):
         )
 
 
-def _page(nonce: str, has_launch_link: bool) -> str:
+def _page(nonce: str) -> str:
     """Return the whole page: a canvas, a status line and nothing else."""
-    button = (
-        '<p><a id="open" class="btn" href="#" rel="noreferrer">Öppna BankID</a></p>'
-        if has_launch_link
-        else ""
-    )
     return f"""<!doctype html><html lang="sv"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
@@ -190,9 +186,8 @@ background:#fff}} .btn{{display:inline-block;padding:.9rem 1.4rem;border-radius:
 background:#03a9f4;color:#fff;text-decoration:none;font-weight:600}} p.idle{{color:#555}}
 </style>
 <h1>Logga in med BankID</h1>
-<p class="idle">Skanna QR-koden med BankID på en annan enhet, eller öppna BankID
-direkt om knappen finns. Sidan stängs när inloggningen är klar.</p>
-{button}
+<p class="idle">Skanna QR-koden med BankID på en annan enhet. Sidan stängs när
+inloggningen är klar.</p>
 <canvas id="qr" width="600" height="600" aria-label="BankID QR-kod"></canvas>
 <p id="status">Startar…</p><script nonce="{nonce}">
 const labels={{starting:'Startar…',waiting:'Skanna QR-koden med BankID',
@@ -212,7 +207,7 @@ async function tick(){{try{{
  const r=await fetch('frame',{{cache:'no-store'}}); if(!r.ok)throw new Error();
  const d=await r.json(); status.textContent=labels[d.status]||'Väntar…';
  draw(d.matrix);
- if(d.launch_url&&open&&link!==d.launch_url){{link=d.launch_url;open.href=link;}}
+ 
  if(!['complete','cancelled','timeout','failed'].includes(d.status))setTimeout(tick,700);
 }}catch(e){{status.textContent=labels.closed;draw(null);}}}}tick();
 </script></html>"""

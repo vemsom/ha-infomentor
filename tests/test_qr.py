@@ -82,22 +82,6 @@ async def test_update_publishes_the_rotating_qr(
     assert payload["status"] == "verifying"
 
 
-async def test_same_device_link_is_published_to_the_page(
-    hass, hass_client_no_auth, store
-) -> None:
-    """The single-phone variant shows a BankID button instead of a QR."""
-    session = store.open()
-    session.update(
-        None, "waiting", "https://app.bankid.com/?autostarttoken=X&redirect=null"
-    )
-    client = await hass_client_no_auth()
-
-    page = await (await client.get(urlsplit(session.url).path)).text()
-    assert 'id="open"' in page
-    payload = await (await client.get(urlsplit(session.url).path + "/frame")).json()
-    assert payload["launch_url"].startswith("https://app.bankid.com/?")
-
-
 async def test_closed_session_is_gone(hass, hass_client_no_auth, store) -> None:
     """After closing, both URLs are 404 and the token is forgotten."""
     session = store.open()

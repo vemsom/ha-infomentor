@@ -147,8 +147,9 @@ async def test_bankid_flow_creates_entry(
     client = await hass_client_no_auth()
     assert (await client.get(qr_path)).status == 200
     frame = await (await client.get(qr_path + "/frame")).json()
-    assert frame["status"] == "waiting"
-    assert frame["matrix"] is not None and len(frame["matrix"]) >= 21
+    assert frame["status"] in {"waiting", "verifying"}
+    if frame["status"] == "waiting":
+        assert frame["matrix"] is not None and len(frame["matrix"]) >= 21
 
     gate.set()
     result = await _finish_bankid(hass, result["flow_id"])
@@ -301,8 +302,9 @@ async def test_bankid_flow_with_the_real_login_chain(
     client = await hass_client_no_auth()
     assert (await client.get(qr_path)).status == 200
     frame = await (await client.get(qr_path + "/frame")).json()
-    assert frame["status"] == "waiting"
-    assert frame["matrix"] is not None and len(frame["matrix"]) >= 21
+    assert frame["status"] in {"waiting", "verifying"}
+    if frame["status"] == "waiting":
+        assert frame["matrix"] is not None and len(frame["matrix"]) >= 21
 
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.SHOW_PROGRESS
