@@ -143,11 +143,18 @@ det syns bara i HA:s register och i entitets-id, aldrig i loggar).
 | Entitet | Typ | Innehåll |
 | --- | --- | --- |
 | `calendar.<barn>_skola` | kalender | Kalenderhändelser idag → +30 dagar. All-day-händelser blir datumspann. Med fritidsschemat påslaget läggs `Fritids 07:00–17:00` in som händelser. |
-| `sensor.<barn>_olasta_skolhandelser` | sensor | Antal notifieringar med state `New`. Attributet `notifications` listar de senaste titlarna. |
-| `sensor.<barn>_senaste_nyhet` | sensor | Senaste nyhetens titel, med `published_at` (och `news_id`) som attribut. |
+| `sensor.<barn>_olasta_skolhandelser` | sensor | Antal notifieringar med state `New`. Attributet `notifications` listar de senaste posterna med `title`, `sent_at`, `type`, `subject` och `body`. |
+| `sensor.<barn>_senaste_meddelande` | sensor | Senaste skolmeddelandet: **värdet är brödtexten** (radbrytningar till mellanrum), med `subject`, `body` (originaltexten), `sent_at` och `notification_id` som attribut. `unknown` när inget meddelande finns. |
+| `sensor.<barn>_senaste_nyhet` | sensor | Senaste nyhetens titel, med `published_at`, `news_id`, `title` och `content` (nyhetens hela text) som attribut. |
 | `sensor.<barn>_nasta_handelse` | sensor | Nästa kalenderhändelses titel, med `start`, `end`, `all_day` som attribut. |
 | `sensor.<barn>_session` | sensor | `ok` eller `reauth_required`. Attribut: `last_update`, `last_update_success`, `include_childcare`, `notification`. |
 | `sensor.infomentor_senaste_uppdatering` | sensor | Tidpunkt för senaste lyckade poll (device-class `timestamp`, ett device för själva kontot). |
+
+Meddelandetexter hämtas genom att meddelandet öppnas hos InfoMentor, och då
+markeras det som **läst** — oläst-räknaren går alltså ner när texten är hämtad.
+Per poll hämtas det nyaste meddelandet plus eventuella olästa (max 3), så
+API:t inte överbelastas. Ett meddelande som redan var läst innan funktionen
+fanns får ingen text förrän det är nyast igen.
 
 ## Så fungerar BankID-inloggningen
 

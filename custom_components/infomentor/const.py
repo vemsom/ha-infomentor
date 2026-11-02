@@ -41,6 +41,11 @@ PATH_NOTIFICATIONS = "/NotificationApp/NotificationApp/GetNotifications"
 PATH_CALENDAR = "/calendarv2/calendarv2/getentries"
 PATH_CHILDCARE = "/TimeRegistration/TimeRegistration/GetTimeRegistrations/"
 PATH_SWITCH_PUPIL = "/Account/PupilSwitcher/SwitchPupil/"
+# Message detail; id comes from a notification's "#/message/show/<id>" reference.
+# Opening a message marks it read at InfoMentor, so the unread count drops.
+PATH_MESSAGE = "/Communication/Message/GetMessage/"
+# How many unread messages get their body pulled per poll (bounded API load).
+MAX_MESSAGE_BODIES = 3
 
 TIME_ZONE = "Europe/Stockholm"
 
