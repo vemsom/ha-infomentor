@@ -172,6 +172,7 @@ class InfoMentorNextEventSensor(InfoMentorEntity, SensorEntity):
             return {}
         return {
             "title": event.title,
+            "description": event.description,
             "start": event.start.isoformat(),
             "end": event.end.isoformat(),
             "all_day": event.all_day,
