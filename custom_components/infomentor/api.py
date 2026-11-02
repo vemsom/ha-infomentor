@@ -24,7 +24,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any
@@ -43,6 +43,8 @@ from .const import (
     MAX_SSO_HOPS,
     PATH_CALENDAR,
     PATH_CHILDCARE,
+    MAX_MESSAGE_BODIES,
+    PATH_MESSAGE,
     PATH_NEWS,
     PATH_NOTIFICATIONS,
     PATH_SWITCH_PUPIL,
@@ -126,6 +128,9 @@ class Notification:
     state: str | None
     sent_at: str | None
     notification_type: str | None
+    source_reference: str | None = None
+    subject: str | None = None
+    body: str | None = None
 
     @property
     def is_unread(self) -> bool:
@@ -316,6 +321,7 @@ def parse_notifications(payload: object) -> tuple[Notification, ...]:
             state=_string_or_none(row.get("state")),
             sent_at=_string_or_none(row.get("dateSent")),
             notification_type=_string_or_none(row.get("type")),
+            source_reference=_string_or_none(row.get("url")),
         )
     ordered = sorted(items.values(), key=lambda item: item.sent_at or "", reverse=True)
     return tuple(ordered)
@@ -798,6 +804,7 @@ class InfoMentorApi:
     ) -> ChildData:
         await self._async_select_pupil(child_id)
         notifications = await self._async_notifications()
+        notifications = await self._async_message_bodies(notifications)
         news = await self._async_news(news_limit)
         events = await self._async_calendar(calendar_start, calendar_end)
         childcare: tuple[ChildcareDay, ...] = ()
@@ -855,6 +862,68 @@ class InfoMentorApi:
 
     async def _async_notifications(self) -> tuple[Notification, ...]:
         return parse_notifications(await self._async_hub_post(PATH_NOTIFICATIONS, {}))
+
+    async def _async_message_body(
+        self, message_id: str
+    ) -> tuple[str | None, str | None]:
+        """Subject and plain-text body of one message.
+
+        The Hub marks the message read when its detail is opened, so the
+        pupil's unread count drops afterwards. Accepted by the owner.
+        """
+        payload = await self._async_hub_post(f"{PATH_MESSAGE}{message_id}", {})
+        if not isinstance(payload, dict):
+            return None, None
+        return (
+            _string_or_none(payload.get("messageSubject")),
+            _string_or_none(
+                payload.get("messageBodyPlainText") or payload.get("messageBody")
+            ),
+        )
+
+    async def _async_message_bodies(
+        self, notifications: tuple[Notification, ...]
+    ) -> tuple[Notification, ...]:
+        """Attach message bodies: the newest message plus unread ones (bounded).
+
+        The newest message is always read so the sensor carries its text even
+        after it has been read elsewhere; unread ones follow so an alert can
+        show what arrived.
+        """
+        def message_id(item: Notification) -> str | None:
+            if (item.notification_type or "") != "MessageCreated":
+                return None
+            match = re.search(r"message/show/(\d+)", item.source_reference or "")
+            return match.group(1) if match else None
+
+        wanted: list[tuple[str, str]] = []
+        newest = next(
+            (item for item in notifications if message_id(item) is not None), None
+        )
+        if newest is not None:
+            wanted.append((newest.id, message_id(newest) or ""))
+        for item in notifications:
+            if not item.is_unread:
+                continue
+            identifier = message_id(item)
+            if identifier and all(entry[0] != item.id for entry in wanted):
+                wanted.append((item.id, identifier))
+            if len(wanted) >= MAX_MESSAGE_BODIES:
+                break
+        if not wanted:
+            return notifications
+        details: dict[str, tuple[str | None, str | None]] = {}
+        for notification_id, msg_id in wanted:
+            try:
+                details[notification_id] = await self._async_message_body(msg_id)
+            except InfoMentorError:
+                details[notification_id] = (None, None)
+        return tuple(
+            replace(item, subject=details[item.id][0], body=details[item.id][1])
+            if item.id in details
+            else item
+            for item in notifications
+        )
 
     async def _async_news(self, limit: int = 10) -> tuple[NewsItem, ...]:
         return parse_news(await self._async_hub_post(PATH_NEWS, {}), limit)
