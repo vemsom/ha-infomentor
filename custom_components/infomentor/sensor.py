@@ -31,7 +31,6 @@ async def async_setup_entry(
         entities.extend(
             (
                 InfoMentorUnreadSensor(coordinator, child),
-                InfoMentorLatestMessageSensor(coordinator, child),
                 InfoMentorNewsSensor(coordinator, child),
                 InfoMentorNextEventSensor(coordinator, child),
                 InfoMentorSessionSensor(coordinator, child),
@@ -72,51 +71,6 @@ class InfoMentorUnreadSensor(InfoMentorEntity, SensorEntity):
                 }
                 for item in data.notifications[:MAX_ATTRIBUTE_ITEMS]
             ]
-        }
-
-
-class InfoMentorLatestMessageSensor(InfoMentorEntity, SensorEntity):
-    """Newest school message: the text as the state, details as attributes.
-
-    The state is capped at Home Assistant's 255-character limit; the full
-    text is always available in the ``body`` attribute.
-    """
-
-    _attr_name = "Senaste meddelande"
-    _attr_icon = "mdi:email-text-outline"
-
-    def __init__(self, coordinator: InfoMentorCoordinator, child) -> None:
-        super().__init__(coordinator, child, "latest_message")
-
-    def _message(self):
-        data = self.data
-        if data is None:
-            return None
-        for item in data.notifications:
-            if (item.notification_type or "") == "MessageCreated" and item.body:
-                return item
-        return None
-
-    @property
-    def native_value(self) -> str | None:
-        item = self._message()
-        if item is None:
-            return None
-        text = " ".join((item.body or "").split())
-        if not text:
-            return item.subject
-        return text if len(text) <= MAX_TITLE_LENGTH else text[: MAX_TITLE_LENGTH - 1] + "\u2026"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        item = self._message()
-        if item is None:
-            return {}
-        return {
-            "subject": item.subject,
-            "body": item.body,
-            "sent_at": item.sent_at,
-            "notification_id": item.id,
         }
 
 

@@ -297,6 +297,26 @@ def stockholm_datetime(value: object) -> datetime:
     return parsed.astimezone(TIME_ZONE_INFO)
 
 
+def _attach_news_text(
+    notifications: tuple[Notification, ...], news: tuple[NewsItem, ...]
+) -> tuple[Notification, ...]:
+    """Give a news notification the same subject/body shape as a message."""
+    by_id = {item.id: item for item in news}
+    enriched: list[Notification] = []
+    for item in notifications:
+        match = re.search(r"news/(\d+)", item.source_reference or "")
+        article = by_id.get(match.group(1)) if match else None
+        if article is not None:
+            text = re.sub(r"<[^>]+>", " ", article.content or "")
+            text = " ".join(text.split())
+            enriched.append(
+                replace(item, subject=article.title, body=text or None)
+            )
+        else:
+            enriched.append(item)
+    return tuple(enriched)
+
+
 def parse_notifications(payload: object) -> tuple[Notification, ...]:
     """Parse the notifications endpoint for the currently selected pupil."""
     if not isinstance(payload, dict) or not isinstance(
@@ -806,6 +826,7 @@ class InfoMentorApi:
         notifications = await self._async_notifications()
         notifications = await self._async_message_bodies(notifications)
         news = await self._async_news(news_limit)
+        notifications = _attach_news_text(notifications, news)
         events = await self._async_calendar(calendar_start, calendar_end)
         childcare: tuple[ChildcareDay, ...] = ()
         if include_childcare:
