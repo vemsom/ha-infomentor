@@ -39,7 +39,7 @@ variables:
              | selectattr('body') | list }}
 
 trigger:
-  - platform: state
+  - trigger: state
     entity_id: !input unread_sensor
 
 condition:
