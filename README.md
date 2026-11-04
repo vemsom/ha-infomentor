@@ -1,84 +1,94 @@
 # InfoMentor för Home Assistant
 
-En liten, läsbar custom integration som visar barnets InfoMentor-data i Home
-Assistant: skolnyheter, notifieringar, kalender och (valfritt) fritidsschema.
+> **English:** An unofficial Home Assistant integration for InfoMentor, the
+> Swedish school platform. It signs in with BankID and exposes each child's
+> school news, messages, calendar and after-school schedule as entities.
+> Read-only: nothing is ever sent back to the school. Home Assistant 2026.10+.
 
-Integrationen är **inte** gjord för HACS. Den installeras genom att kopiera
-katalogen — eller genom att klona repot — till `config/custom_components/` och
-starta om Home Assistant.
+Integrationen hämtar det skolan publicerar i InfoMentor och gör det till
+entiteter i Home Assistant: nyheter, meddelanden, kalenderhändelser och — om du
+slår på det — fritidsschemat. Varje barn får en egen enhet med barnets namn, så
+att `calendar.<barn>_skola` och `sensor.<barn>_olasta_skolhandelser` hamnar under
+samma enhet i gränssnittet.
 
-Den är **read-only**: den läser skolnyheter, notifieringar, kalendern och
-(eventuellt) fritidsregistreringar. Ingenting skrivs tillbaka till InfoMentor,
-och ingen push-registrering görs.
+Den är **läs-only**. Ingenting skickas tillbaka till InfoMentor: inga
+närvaroregistreringar, inga svar på meddelanden, inga ändringar i kalendern.
+Den enda skrivningen som sker hos InfoMentor är en bieffekt av läsningen — när
+integrationen hämtar texten i ett meddelande öppnas meddelandet, och då
+markeras det som läst där (se *Kända begränsningar*).
 
-Inloggningen sker med **BankID i config flowen**: Home Assistant visar en
-roterande QR-kod, du skannar den med BankID, och integrationen hämtar sin egen
-refresh-token. Ingen token behöver klistras in.
+## Krav
 
-## Vad som krävs
-
-- Home Assistant 2024.6 eller senare (använder `config_entry.runtime_data`).
-- En webbläsare på någon enhet i hemmet, för QR-sidan.
-- Inga extra Python-beroenden i HA — `manifest.json` har `requirements: []`.
-  QR-koden ritas av en vendrad ren Python-kodare (se *Attribution*), allt annat
-  går på `aiohttp` och standardbiblioteket.
+- Home Assistant **2026.10** eller senare.
+- Ett InfoMentor-konto som vårdnadshavare, med minst ett länkat barn.
+- BankID i telefonen.
+- **Två skärmar vid inloggningen.** Home Assistant visar en QR-kod på en skärm
+  och telefonen scannar den. En telefon kan inte scanna sin egen skärm.
+- Inga extra Python-paket. `manifest.json` har `requirements: []` — QR-koden
+  ritas av en medföljande ren Python-kodare, allt annat går på `aiohttp` och
+  standardbiblioteket.
 
 ## Installation
 
-Kopiera katalogen:
+### Manuellt
+
+Kopiera mappen `infomentor` till Home Assistants `custom_components` och starta
+om:
 
 ```sh
-# från repo-roten, på maskinen som kör Home Assistant
-cp -r custom_components/infomentor /sökväg/till/homeassistant/config/custom_components/
+cp -r custom_components/infomentor /sökväg/till/config/custom_components/
 ```
 
-eller klona direkt på plats:
+Sökvägen är oftast `/config/custom_components/` om du kör Home Assistant OS
+eller Supervised. Resultatet ska bli
+`/config/custom_components/infomentor/manifest.json`.
 
-```sh
-cd /sökväg/till/homeassistant/config/custom_components
-git clone <repo-url> ha-infomentor && cp -r ha-infomentor/custom_components/infomentor .
-```
+### HACS (custom repository)
 
-Starta om Home Assistant. Integrationen dyker upp under *Inställningar →
-Enheter och tjänster → Lägg till integration → InfoMentor*.
+1. HACS → menyn uppe till höger → **Anpassade repon**.
+2. Klistra in repots URL, välj typen **Integration**, lägg till.
+3. Sök upp **InfoMentor** i HACS, installera.
+4. Starta om Home Assistant.
 
-## Lägg till integrationen från telefonen
+Repot har `hacs.json` i roten och integrationen ligger i
+`custom_components/infomentor/`, vilket är den struktur HACS förväntar sig.
 
-Det här är hela flödet, utan dator:
+## Konfiguration
 
 1. *Inställningar → Enheter och tjänster → Lägg till integration → InfoMentor*.
-2. Välj **BankID – skanna QR-kod på en annan enhet**. (Har du bara en telefon,
-   välj **BankID – på den här telefonen** i stället, se nedan.)
+2. Välj **BankID – skanna QR-kod på en annan enhet**.
 3. Home Assistant visar en länk: *Öppna QR-koden i en webbläsare*. Öppna den på
-   den enhet som ska visa QR-koden — en surfplatta, en gammal telefon, en dator.
-   Sidan innehåller bara QR-koden och en statusrad, inget annat.
-4. Skanna QR-koden med BankID på telefonen som har BankID. Koden roteras
-   automatiskt; sidan visar *Godkänn i BankID* när du har skannat.
-5. När BankID är godkänt visar sidan *Klart – gå tillbaka till Home Assistant*,
-   och Home Assistant går vidare. Står dialogen fortfarande kvar på QR-steget
-   trycker du **Skicka**: den väntar då klart (högst fyra minuter) och hoppar
-   vidare.
-6. Har kontot flera länkade barn får du välja vilka som ska få entiteter.
-   Klart — integrationen sköter resten och förnyar sig själv.
+   den enhet som ska visa koden — en surfplatta, en dator, en telefon du inte
+   ska scanna med. Sidan innehåller bara QR-koden och en statusrad.
+4. Scanna koden med BankID. Koden roteras automatiskt medan försöket pågår.
+5. När BankID är godkänt går dialogen vidare av sig själv. Har kontot flera
+   länkade barn får du välja vilka som ska få entiteter.
+6. Klart. Integrationen sköter förnyelsen av sin egen session.
 
-Länken till QR-sidan är en engångsbijett: den slutar fungera (HTTP 404) så fort
-inloggningen är klar, avbruten eller har tajmat ut, och den ger inte åtkomst
-till något annat. Den bygger på Home Assistants konfigurerade externa URL om en
-sådan finns, annars den interna — den måste alltså gå att nå från enheten som
-ska visa QR-koden.
+Länken till QR-sidan är en engångslänk: den slutar fungera så fort försöket är
+klart, avbrutet eller har gått ut, och den ger inte åtkomst till något annat.
+Den bygger på Home Assistants konfigurerade URL och måste därför gå att nå från
+enheten som visar koden — bakom en reverse proxy kan det kräva att den externa
+URL:en är satt.
 
-### Bara en telefon?
+En config entry motsvarar **ett InfoMentor-konto**, det vill säga en
+vårdnadshavare. Har du och en medvårdnadshavare separata konton blir det två
+poster.
 
-En telefon kan inte skanna sin egen skärm. Välj därför **BankID – på den här
-telefonen**: då visar sidan en **Öppna BankID**-knapp i stället för en QR-kod,
-och BankID-appen startas direkt på samma telefon. Resten är identiskt (öppna
-länken, tryck på knappen, godkänn, gå tillbaka till Home Assistant).
+### Alternativ
 
-## Alternativ: klistra in en refresh-token
+*Inställningar → Enheter och tjänster → InfoMentor → Konfigurera*:
 
-Finns kvar som avancerat alternativ (*Klistra in refresh-token (avancerat)*) för
-den som redan har en token, eller om BankID-vägen inte kan användas. En sådan
-token skapas med [`infomentor-mcp`](https://github.com/wicol/infomentor-mcp):
+- **Barn** — vilka av kontots länkade barn som ska ha entiteter.
+- **Inkludera fritidsschemat** — avstängt som standard. Slås det på hämtas
+  fritidsregistreringar sju dagar framåt och läggs in som händelser i barnets
+  kalender. Det kostar en extra förfrågan per barn och poll.
+
+### Om BankID inte går att använda
+
+Det finns ett avancerat alternativ, **Klistra in refresh-token**, för den som
+redan har en sådan. En token kan skapas med
+[`infomentor-mcp`](https://github.com/wicol/infomentor-mcp):
 
 ```sh
 TMP_STATE="$(mktemp -d)"
@@ -90,205 +100,126 @@ jq -r .refresh_token "$TMP_STATE/infomentor-mcp/mobile-credentials.json"
 rm -rf "$TMP_STATE"
 ```
 
-`PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring` tvingar fram filen i
-stället för systemets nyckelring, så att MCP:ns egen inloggning inte skrivs
-över.
-
-### Låt MCP:ns egen grant vara
-
-**Återanvänder du MCP:ns befintliga refresh-token kan rotation göra att MCP:n
-tappar sin.** InfoMentor returnerar en ny refresh-token vid förnyelse och den
-gamla slutar gälla: två klienter på samma grant slår ut varandra. Använd därför
-BankID-flödet här — det skapar en egen grant — och låt MCP:n behålla sin.
-
-Samma sak i andra riktningen: om MCP:n loggar in igen och roterar bort sin grant
-påverkas inte HA:s post (den har en egen). Skulle HA:s token ändå sluta
-accepteras startar integrationen ett reauth-flöde i stället för att tyst sluta
-uppdatera.
-
-## Konfiguration
-
-1. Välj inloggningssätt — BankID (QR eller telefon) är standard.
-2. Integrationen växlar den hämtade koden mot ett access-token, öppnar en
-   Hub-session och gör **en** läsning (barnlistan) för att verifiera. Fungerar
-   det inte sparas ingenting, och felet visas i formuläret.
-3. Har kontot flera länkade barn får du välja vilka som ska få entiteter.
-   En config entry täcker alltså ett InfoMentor-konto (en vårdnadshavare).
-
-### Reauth
-
-När refresh-tokenen inte längre accepteras (HTTP 400/401 från token-endpointen)
-sätter Home Assistant posten i *reauthentication required* och visar **samma
-BankID-väg** — QR eller telefon, inte token-klistret. Entiteterna slutar aldrig
-tyst uppdatera: `sensor.<barn>_session` står kvar och visar `reauth_required`
-med orsaken i attributet `notification`.
-
-Ett BankID som tillhör ett annat konto (annan barnuppsättning) avvisas i
-reauth-flödet, så att fel inloggning inte kan ersätta en fungerande post.
-
-### Options
-
-*Inställningar → Enheter och tjänster → InfoMentor → Konfigurera*:
-
-- **Barn** — vilka barn som ska ha entiteter.
-- **Fritidsschemat** — avstängt som standard. Slås det på hämtas
-  fritidsregistreringar för de kommande sju dagarna och blir händelser i
-  barnets kalender. Det kostar ytterligare en förfrågan per barn och vecka.
+Använd helst BankID-vägen i stället: den skapar en egen inloggning. InfoMentor
+returnerar en ny refresh-token vid varje förnyelse och den gamla slutar gälla,
+så två klienter som delar samma token slår ut varandra. Integrationen sparar
+sin token i Home Assistants config entry och skriver över den när den roteras.
 
 ## Entiteter
 
-Ett device per barn, med barnets namn som device-namn (det är hela poängen —
-det syns bara i HA:s register och i entitets-id, aldrig i loggar).
+Ett device per barn, med barnets namn som device-namn. `<barn>` i entitets-id:t
+är barnets namn i gemener med understreck.
 
-| Entitet | Typ | Innehåll |
-| --- | --- | --- |
-| `calendar.<barn>_skola` | kalender | Kalenderhändelser idag → +30 dagar. All-day-händelser blir datumspann. Med fritidsschemat påslaget läggs `Fritids 07:00–17:00` in som händelser. |
-| `sensor.<barn>_olasta_skolhandelser` | sensor | Antal notifieringar med state `New`. Attributet `notifications` listar de senaste posterna med `title`, `sent_at`, `type`, `subject` och `body`. |
-| `sensor.<barn>_senaste_meddelande` | sensor | Senaste skolmeddelandet: **värdet är brödtexten** (radbrytningar till mellanrum), med `subject`, `body` (originaltexten), `sent_at` och `notification_id` som attribut. `unknown` när inget meddelande finns. |
-| `sensor.<barn>_senaste_nyhet` | sensor | Senaste nyhetens titel, med `published_at`, `news_id`, `title` och `content` (nyhetens hela text) som attribut. |
-| `sensor.<barn>_nasta_handelse` | sensor | Nästa kalenderhändelses titel, med `start`, `end`, `all_day` som attribut. |
-| `sensor.<barn>_session` | sensor | `ok` eller `reauth_required`. Attribut: `last_update`, `last_update_success`, `include_childcare`, `notification`. |
-| `sensor.infomentor_senaste_uppdatering` | sensor | Tidpunkt för senaste lyckade poll (device-class `timestamp`, ett device för själva kontot). |
+| Entitet | Typ | Värde | Attribut |
+| --- | --- | --- | --- |
+| `calendar.<barn>_skola` | kalender | Kalenderhändelser från idag och 30 dagar framåt. Med fritidsschemat påslaget även `Fritids 07:00–17:00` för de kommande sju dagarna. | Händelserna har `summary`, `description` och `uid`. Heldagshändelser blir datumspann. |
+| `sensor.<barn>_olasta_skolhandelser` | sensor | Antal notifieringar som fortfarande är olästa (`New`). | `notifications`: de senaste tio posterna med `title`, `sent_at`, `type`, `subject` och `body`. |
+| `sensor.<barn>_senaste_nyhet` | sensor | Den senaste nyhetens rubrik. | `published_at`, `news_id`, `title`, `content` (nyhetens hela text). |
+| `sensor.<barn>_nasta_handelse` | sensor | Nästa kalenderhändelses rubrik. | `title`, `description`, `start`, `end`, `all_day`, `event_id`. |
+| `sensor.<barn>_session` | sensor | `ok` eller `reauth_required`. | `last_update`, `last_update_success`, `include_childcare`, `notification` (orsaken när något är fel). |
+| `sensor.infomentor_senaste_uppdatering` | sensor | Tidpunkten för senaste lyckade hämtning (`timestamp`). Hör till ett eget device för kontot, inte till ett barn. | `reauth_required`. |
 
-Meddelandetexter hämtas genom att meddelandet öppnas hos InfoMentor, och då
-markeras det som **läst** — oläst-räknaren går alltså ner när texten är hämtad.
-Per poll hämtas det nyaste meddelandet plus eventuella olästa (max 3), så
-API:t inte överbelastas. Ett meddelande som redan var läst innan funktionen
-fanns får ingen text förrän det är nyast igen.
+Meddelandets ämne och text ligger i `notifications`-attributet på
+`olasta_skolhandelser` — det finns ingen separat sensor för senaste meddelande.
+Per hämtning öppnas det nyaste meddelandet plus eventuella olästa, högst tre,
+för att inte belasta API:t i onödan. Ett meddelande som redan var läst när
+funktionen infördes får ingen text förrän det är nyast igen.
 
-## Så fungerar BankID-inloggningen
+Attributen är tänkta att användas i automationer och mallar, till exempel:
 
-Samma väg som `infomentor-mcp` verifierat i skarpt läge, portad till `aiohttp`:
+```yaml
+{{ state_attr('sensor.barn_nasta_handelse', 'start') }}
+{{ state_attr('sensor.barn_olasta_skolhandelser', 'notifications')[0].subject }}
+```
 
-1. `GET https://sso.infomentor.se/login.ashx?idp=stockholm_par` — redirect- och
-   formulärkedjan följs till Stockholmssidans BankID-sida.
-2. `GET …?initialize=qr` startar en BankID-order och ger den första
-   QR-payloaden. (Telefonvarianten använder `initialize=url` och får i stället
-   en autostart-länk till BankID-appen.)
-3. Ordern pollas (`?verifyorder=<order>`) ungefär en gång i sekunden, i högst
-   fyra minuter. Varje svar kan innehålla en ny QR-payload som sidan ritar om.
-   Vid `OK` följs SAML-kedjan så att en Hub-cookie-session bildas, och sessionen
-   verifieras med en läsning av Hub-adressen (barnlistan).
-4. `POST https://hub.infomentor.se/account/pair/GetAuthenticationData` ger
-   appens `authGuid`. Svaret kontrolleras hårt: bara de verifierade
-   `im.infomentor.se`/`api-im.infomentor.se`-adresserna och klienten
-   `notificationapp` godtas.
-5. `GET https://im.infomentor.se/Authentication/Authentication/LoginOAuth2` med
-   `authGuid`, `DeviceIdentifier` (nytt UUID per inloggning),
-   `DeviceFriendlyName=Home Assistant`, `DevicePlatform=Android`,
-   `scope=IM2-API-NOTIFICATION`,
-   `redirect_uri=InfomentorNotification://oauth2Callback`,
-   `client_id=notificationapp`, `response_type=code` och `isSandBox=false`.
-   Svaret ska vara en redirect till appens callback med en `code`.
-6. `POST https://im.infomentor.se/Authentication/OAuth2/Token` (form-encoded,
-   `grant_type=authorization_code`, `client_id=notificationapp`,
-   `client_secret=NONE`, `redirect_uri=InfomentorNotification://oauth2Callback`)
-   växlar koden mot access- och refresh-token. Bara refresh-tokenen sparas i
-   config entryn.
+## Så fungerar det
 
-**Varför BankID först?** `LoginOAuth2` kräver ett `authGuid`, och `authGuid`
-delas bara ut av discovery, som i sin tur kräver en autentiserad Hub-session.
-App-auktoriseringen kan alltså inte startas utan en genomförd BankID-inloggning
-— därför kommer QR-steget före anropet i steg 5, inte före steg 1.
+Inloggningen följer samma väg som InfoMentors mobilapp: skolans SSO med BankID,
+därefter en app-auktorisering som ger integrationen en egen OAuth-token. Bara
+refresh-token sparas, i Home Assistants config entry, och den förnyas automatiskt
+när den går ut. Access-token skickas aldrig vidare till webbinloggningen, och
+inga tokens, QR-koder eller barnnamn skrivs till loggen.
 
-Därefter sköter den vanliga klienten all datahämtning:
-
-1. `POST https://im.infomentor.se/Authentication/OAuth2/Token` (form-encoded)
-   med `grant_type=refresh_token`, `refresh_token`, `client_id=notificationapp`,
-   `client_secret=NONE`, `scope=IM2-API-NOTIFICATION`. Ger access-token (600 s)
-   och en eventuellt roterad refresh-token.
-2. `GET https://api-im.infomentor.se/NA1/Authentication/sso` med
-   `Authorization: Bearer *** ger en inloggnings-URL.
-3. Integrationen följer SAML-redirect- och formulärkedjan från den URL:en så att
-   `aiohttp`-sessionens cookie-jar får en Hub-session.
-4. Data läses med cookies från `https://hub.infomentor.se`:
-   `/Communication/News/GetNewsList`,
-   `/NotificationApp/NotificationApp/GetNotifications`,
-   `/calendarv2/calendarv2/getentries`,
-   `/TimeRegistration/TimeRegistration/GetTimeRegistrations/` och
-   `/Account/PupilSwitcher/SwitchPupil/{id}`.
-
-Bearer-token skickas aldrig vidare till web-inloggningen, redirects följs bara
-till `*.infomentor.se` / `*.stockholm.se`, och inga tokens, QR-payloads,
-`authGuid`-värden, koder eller barnnamn hamnar i loggrader.
-
-### QR-vyn: vad den skyddar och hur den städas
-
-- **URL:en är hemligheten.** Varje inloggningsförsök får en egen väg,
-  `/api/infomentor/bankid/<32 slumpade byte>` (256 bitar från `secrets`), och
-  den får nås utan inloggning just för att den *är* engångsbiljetten. Inget
-  annat ligger bakom den.
-- **Bara QR och status.** Sidan innehåller en `<canvas>`, en statusrad och — i
-  telefonvarianten — en BankID-knapp. Inga skoluppgifter, tokens, cookies eller
-  enhets-id. `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
-  `X-Content-Type-Options: nosniff` och en strikt CSP utan externa resurser.
-- **Kortlivad.** Vägen läggs i en tabell i minnet när försöket startar och tas
-  bort när det tar slut: lyckat, avbrutet (`ERROR`/`CANCELLED` i BankID),
-  timeout (fyra minuter) eller när dialogen stängs eller överges. Därefter
-  svarar både sidan och dess `/frame` med 404.
-- **Ingen loggning av hemligheter.** Varken URL:en, QR-payloaden, `authGuid`,
-  koden eller tokens skrivs till loggen — felmeddelanden innehåller bara steg,
-  HTTP-status och en grov kategori.
-- **Egen cookie-burk.** BankID-inloggningen använder en egen, tillfällig
-  `aiohttp`-session vars connector stängs när försöket är slut, så
-  inloggningscookies läcker inte in i den session den körande klienten använder.
+Datan hämtas med en `DataUpdateCoordinator` var femtonde minut, en läsning per
+barn: nyheter, notifieringar, kalender och (valfritt) fritidsregistreringar.
+Det är enbart läsande anrop mot InfoMentors egna endpoints — samma som appen
+använder.
 
 ## Kända begränsningar
 
-- **Polling var 15:e minut, ingen push.** Nya läxor och ändringar syns inom en
-  kvart. InfoMentors push-notifikationer används inte.
-- **Refresh-tokenens livslängd över veckor är oprövad.** Att access-tokenen
-  förnyas efter faktisk utgång utan BankID är verifierat i skarpt läge av
-  `infomentor-mcp`, men hur länge en refresh-token lever innan den måste förnyas
-  med BankID är inte känt. Räkna med att reauth kan behövas då och då.
-- **QR-koden kräver en skärm till** (eller telefonvarianten). Sidan måste nås
-  från enheten som visar koden, så Home Assistant behöver en URL som den
-  enheten kan använda — särskilt bakom reverse proxy.
-- **Inga bilagor.** Nyhetsbilagor (PDF/DOCX) hämtas inte; bara titel, text och
+- **Polling var 15:e minut, ingen push.** Nya meddelanden och ändringar syns
+  inom en kvart. InfoMentors pushnotifikationer används inte.
+- **Inloggningen behöver ibland göras om.** Hur länge en refresh-token lever är
+  inte känt i detalj. När InfoMentor avvisar den startar Home Assistant ett
+  reauth-flöde i stället för att tyst sluta uppdatera — `session`-sensorn visar
+  `reauth_required` och orsaken finns i attributet `notification`.
+- **Att läsa är att läsa.** När texten i ett meddelande hämtas öppnas det hos
+  InfoMentor och markeras som läst. Oläst-räknaren i appen och på webben går
+  alltså ner när integrationen har hämtat texten.
+- **BankID på samma telefon fungerar inte.** Menyn har alternativet *BankID – på
+  den här telefonen*, men inloggningen fullföljs inte den vägen. Använd QR-koden
+  på en annan skärm.
+- **BankID-inloggningen är inte helt pålitlig än.** Du kan starta en order och
+  godkänna i BankID, men inloggningen kan stanna efter godkännandet i stället
+  för att ge en session. Reservvägen är att klistra in en refresh-token.
+- **QR-koden kräver en nåbar URL.** Sidan måste gå att öppna från enheten som
+  visar koden, vilket bakom en reverse proxy kan kräva att den externa URL:en är
+  konfigurerad i Home Assistant.
+- **Inga bilagor.** Nyhetsbilagor (PDF, DOCX) hämtas inte; bara rubrik, text och
   publiceringsdatum.
-- **En vårdnadshavare per config entry.** Två konton = två poster, och samma
-  barnuppsättning kan bara läggas upp en gång (unique id är en hash av
-  barn-id:na).
-- **Kalenderfönstret är idag → +30 dagar**, inte hela terminen. Historik finns
-  inte, eftersom varje poll annars blir dyrare än den är värd.
-- All-day-händelser blir heldagsposter i HA; InfoMentors exakta sluttid för
-  heldagar är inte modellerad.
-- **Inget är kört mot InfoMentors skarpa API härifrån** (inga riktiga konton
-  finns i utvecklingsmiljön). Se *Utveckling* för vad som är testat och vad som
-  måste provas skarpt.
+- **Ett konto per config entry.** Två vårdnadshavare med separata konton ger två
+  poster. Samma barnuppsättning kan bara läggas upp en gång.
+- **Kalenderfönstret är idag till 30 dagar framåt.** Ingen historik, eftersom
+  varje hämtning annars blir dyrare än den är värd.
+- **Heldagshändelser** blir heldagsposter i Home Assistant; InfoMentors exakta
+  sluttid för en heldag är inte modellerad.
+- **Inloggningen går via skolans Stockholms-SSO** (`stockholm_par`), samma väg
+  som mobilappen använder. Andra kommuners uppsättning är inte provad.
 
 ## Felsökning
 
-- `sensor.<barn>_session` = `reauth_required` → kör reauth; BankID-vägen
-  används automatiskt. Attributet `notification` säger varför.
-- *BankID-inloggningen avbröts eller avvisades* → ordern nekades i BankID eller
-  hann gå ut (en oskannad order lever i ca 30 sekunder). Dialogen visar en ny
-  QR-kod att försöka med.
-- *BankID-inloggningen tog för lång tid* → ingen skanning och godkännande inom
-  fyra minuter.
-- QR-sidan säger *Sidan är stängd* → försöket är slut; gå tillbaka till Home
-  Assistant, som redan visar nästa steg eller en ny QR.
-- `cannot_connect` i config flowen → nätverksfel mot InfoMentor, inte
-  inloggningsfel. Prova igen.
-- Allt blir `unavailable` men sessionen säger `ok` → titta i HA-loggen efter
-  `infomentor`; felmeddelandena är avsiktligt innehållslösa (inga tokens, inga
-  personuppgifter), men de skiljer på nätverksfel, HTTP-status och oväntat
-  svarsformat.
+**Sessionen har gått ut.** `sensor.<barn>_session` visar `reauth_required`.
+Öppna integrationen och kör om autentiseringen — BankID-vägen används
+automatiskt. Attributet `notification` säger varför. Ett BankID som tillhör ett
+annat konto avvisas, så en felaktig inloggning kan inte ersätta en fungerande
+post.
+
+**Inga entiteter alls.** Kontrollera att posten är inlagd och att minst ett barn
+är valt under *Konfigurera*. Har du flera barn och valde bort alla blir ingenting
+skapat. Efter en ändring av inställningarna laddas posten om automatiskt.
+
+**Entiteterna blir oattribuerade (`unavailable`).** Det betyder att hämtningen
+misslyckades, oftast ett nätverksfel mot InfoMentor. Sessionen står kvar och
+visar `ok`, och `sensor.infomentor_senaste_uppdatering` visar när det senast
+lyckades. Nästa poll brukar rätta till det. Fortsätter det: titta i Home
+Assistants logg efter `infomentor` — felmeddelandena är avsiktligt
+innehållslösa (inga tokens, inga personuppgifter) men skiljer på nätverksfel,
+HTTP-status och oväntat svarsformat.
+
+**`cannot_connect` i inloggningsdialogen.** Nätverksfel mot InfoMentor, inte fel
+lösenord eller fel konto. Prova igen.
+
+**QR-sidan säger att den är stängd, eller ger 404.** Försöket är slut. Gå
+tillbaka till Home Assistant, som visar nästa steg eller en ny kod.
 
 ## Attribution
 
-BankID- och app-auktoriseringsprotokollet är portat till `aiohttp` från
-[`infomentor-mcp`](https://github.com/wicol/infomentor-mcp) (MIT):
-`src/infomentor_mcp/login/web_qr.py`, `auth/stockholm_bankid.py` och
-`auth/mobile_pairing.py`, med `docs/mobile-auth.md` som dokumentation. Här är
-det omskrivet för Home Assistants config flow, och inget från det projektet
-krävs vid körning.
+Integrationen är byggd ovanpå det öppna projektet
+[`infomentor-mcp`](https://github.com/wicol/infomentor-mcp) (MIT), som visat hur
+BankID- och app-auktoriseringen fungerar, och använder InfoMentors egna
+endpoints — samma som mobilappen anropar. Protokollet är portat till `aiohttp`
+och omskrivet för Home Assistants config flow; ingenting från det projektet
+behövs vid körning.
 
 QR-kodaren i `custom_components/infomentor/qrcodegen.py` är
 [QR Code generator library](https://www.nayuki.io/page/qr-code-generator-library)
-av Project Nayuki (MIT), vendrad oförändrad — bara en lint-rad är tillagd i
-filhuvudet. Den behövs för att integrationen ska kunna rita QR-koden utan
+av Project Nayuki (MIT), och medföljer oförändrad bortsett från en lint-rad i
+filhuvudet. Den finns med för att integrationen ska kunna rita QR-koden utan
 runtime-beroenden.
+
+Det här är en **inofficiell integration**. Den har ingen koppling till
+InfoMentor och används på eget ansvar; varumärket InfoMentor tillhör InfoMentor.
+API:erna är inte publika och kan ändras utan förvarning.
 
 ## Utveckling
 
@@ -299,59 +230,9 @@ uv pip install --python .venv-test/bin/python pytest-homeassistant-custom-compon
 .venv-test/bin/ruff check custom_components tests --line-length 100
 ```
 
-Testerna kör en riktig Home Assistant-core i testläge
-(`pytest-homeassistant-custom-component`), laddar integrationen som custom
-component och verifierar:
+Testerna körs mot en Home Assistant-core i testläge med en lokal fejkserver i
+stället för InfoMentor. Se `tests/` för vad sviten täcker.
 
-- att config flow, options flow och reauth-flödena skapar/uppdaterar poster —
-  både BankID-vägen (QR och telefon) och den avancerade token-vägen,
-- att QR-vyns livscykel håller: sidan och `/frame` svarar utan inloggning medan
-  försöket pågår, innehåller bara QR/status, ger 404 för okända vägar och för
-  den egna vägen efter avslutat, avbrutet, timat ut eller övergivet försök,
-- att timeout, avbrott och misslyckad kodväxling ger fel i formuläret och
-  **ingen** config entry,
-- att hela BankID-kedjan (SSO-formulär → order → polling → SAML → discovery →
-  app-auktorisering → kodväxling) går mot en lokal fejkserver med exakt form på
-  anropen, och att config entryn då får den hämtade refresh-tokenen,
-- att en avvisad refresh-token startar reauth och ett nätverksfel ger retry,
-- att hela auth-kedjan för datahämtningen (token-endpoint → SSO-bridge →
-  SAML-formulär → Hub-läsning) fungerar mot samma typ av fejkserver,
-- att QR-kodaren ger en fullständig QR-symbol (modulstorlek, hittarmönster),
-- att entitets-id:na blir `calendar.<barn>_skola` m.fl. och att tillstånd och
-  attribut stämmer,
-- att manifest och översättningar hänger ihop.
+## Licens
 
-QR-kodaren är dessutom provad utanför testsviten: matrisen ritades upp som en
-bitmapp och lästes tillbaka med en oberoende dekoder (OpenCV `QRCodeDetector`),
-vilket gav exakt samma payload. Sidans JavaScript är syntaxkontrollerat med
-`node --check`.
-
-Det som **inte** kan verifieras utan en riktig HA-installation och ett riktigt
-konto: att Stockholm/BankID accepterar en QR-order från HA:s IP, att SAML-kedjan
-i praktiken landar i en Hub-cookie-session, att discovery svarar med ett
-`authGuid`, att app-auktoriseringen ger en `code` som token-endpointen tar emot,
-att QR-sidan går att nå från telefonen via den konfigurerade URL:en (särskilt
-bakom reverse proxy), att fältnamnen i kalender/fritidssvar stämmer med dagens
-API, och hur länge refresh-tokenen lever.
-
-
-## Öppet: BankID-inloggningen i HA
-
-QR-flödet fungerar fram till godkännandet: sidan visar en giltig kod, BankID
-approverar ordern (pollningen når `OK`). Därefter laddas sidan om och Stockholms
-SSO svarar med **BankID:s väljarsida** (`login003.stockholm.se/…/NECSadcmbid`,
-28 801 tecken, inget SAML-formulär) i stället för en autentiserad session, och
-Hubben svarar 302 på `timetable/timetable/appData`.
-
-Samma utfall gäller den dedikerade samma-enhet-ordern (`initialize=url`), och
-även den externa referensklienten (`infomentor-mcp auth login --method url`)
-misslyckas. Det pekar på överlämningen BankID → SiteMinder, inte på HA-porten.
-
-Att göra:
-- jämför anropet som *avslutar* inloggningen med `infomentor-mcp`
-  (`auth/stockholm_bankid.py:finish`) rad för rad — särskilt om SSO:n kräver
-  ytterligare ett `verifyorder`-poll innan omladdning, eller en annan URL än
-  den utan parametrar,
-- fråga Wictor om han någonsin får väljarsidan efter ett godkänt försök,
-- verifiera på en andra skärm när sådan finns; tills dess kör HA på en lånad
-  refresh-token som delas med `infomentor-mcp` (de kan rotera ut varandra).
+MIT, se [LICENSE](LICENSE).
