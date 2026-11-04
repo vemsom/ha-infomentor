@@ -179,7 +179,7 @@ direkt i `automations.yaml` eller via *Redigera som YAML*:
 alias: Skolnotis
 description: Notis när antalet olästa skolhändelser ökar
 trigger:
-  - platform: state
+  - trigger: state
     entity_id: sensor.DITT_BARN_OLASTA_SKOLHANDELSER
 condition:
   - condition: template
