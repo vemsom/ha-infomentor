@@ -1,0 +1,81 @@
+# Exempel: Skola-vy i Lovelace
+#
+# Klistra in i en tom vy via dashboardens "Raw configuration editor", eller
+# lägg in korten ett i taget. Byt ut DITT_BARN mot ditt barns entitets-id —
+# id:t syns i Inställningar -> Enheter och tjänster -> InfoMentor -> entiteten.
+#
+# All text hämtas ur sensorattributen, så korten kräver ingen egen integration.
+
+title: Skola
+path: skola
+icon: mdi:school
+cards:
+  - type: markdown
+    title: Senaste meddelande
+    content: >-
+      {% set s = 'sensor.DITT_BARN_OLASTA_SKOLHANDELSER' %}
+      {% set items = (state_attr(s, 'notifications') or [])
+           | selectattr('type', 'eq', 'MessageCreated')
+           | selectattr('body') | list %}
+      {% if items %}
+      **{{ items[0].subject or 'Meddelande' }}**
+
+      {{ items[0].body }}
+
+      _{{ (items[0].sent_at or '')[:10] }} kl. {{ (items[0].sent_at or '')[11:16] }}_
+      {% else %}
+      _Inget meddelande just nu._
+      {% endif %}
+
+  - type: markdown
+    title: Nästa händelse
+    content: >-
+      {% set e = 'sensor.DITT_BARN_NASTA_HANDELSE' %}
+      {% set start = state_attr(e, 'start') %}
+      {% set desc = state_attr(e, 'description') %}
+      {% if start %}
+      **{{ states(e) }}**
+
+      {{ start[:10] }} kl. {{ start[11:16] }}{% if state_attr(e, 'all_day') %} (heldag){% endif %}
+      {% if desc %}
+
+      {{ desc | striptags }}
+      {% endif %}
+      {% else %}
+      _Ingen kommande händelse._
+      {% endif %}
+
+  - type: markdown
+    title: Senaste nyhet
+    content: >-
+      {% set n = 'sensor.DITT_BARN_SENASTE_NYHET' %}
+      {% set c = state_attr(n, 'content') %}
+      {% if c %}
+      **{{ states(n) }}**
+
+      {{ c | striptags }}
+
+      _{{ (state_attr(n, 'published_at') or '')[:10] }}_
+      {% else %}
+      _Ingen nyhet just nu._
+      {% endif %}
+
+  - type: markdown
+    title: Status
+    content: >-
+      **Olästa händelser:** {{ states('sensor.DITT_BARN_OLASTA_SKOLHANDELSER') }}
+      · **Session:** {{ states('sensor.DITT_BARN_SESSION') }}
+
+      _Uppdaterad: {{ (states('sensor.infomentor_senaste_uppdatering') or '')[:10] }}
+      kl. {{ (states('sensor.infomentor_senaste_uppdatering') or '')[11:16] }}_
+
+  - type: entities
+    title: Detaljer
+    entities:
+      - entity: calendar.DITT_BARN_SKOLA
+        name: Kalender
+      - sensor.DITT_BARN_NASTA_HANDELSE
+      - sensor.DITT_BARN_SENASTE_NYHET
+      - sensor.DITT_BARN_OLASTA_SKOLHANDELSER
+      - sensor.DITT_BARN_SESSION
+      - sensor.infomentor_senaste_uppdatering

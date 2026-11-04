@@ -1,0 +1,61 @@
+blueprint:
+  name: InfoMentor – notis när olästa skolhändelser ökar
+  description: >-
+    Skickar en notis när antalet olästa händelser från skolan ökar. Rubriken blir
+    meddelandets ämne och brödtexten meddelandets text. Saknas text visas antalet
+    nya händelser i stället. Ett tryck på notisen öppnar den sida du anger.
+  domain: automation
+  source_url: https://github.com/vemsom/ha-infomentor/blob/master/blueprints/automation/infomentor/skolnotis.yaml
+  input:
+    unread_sensor:
+      name: Sensor för olästa händelser
+      description: Sensorn som heter "Olästa skolhändelser" för det barn du vill bevaka.
+      selector:
+        entity:
+          filter:
+            - integration: infomentor
+              domain: sensor
+    notify_service:
+      name: Notifieringstjänst
+      description: >-
+        Tjänsten som ska skicka notisen, till exempel notify.mobile_app_min_telefon.
+        Namnet hittas under Utvecklarverktyg -> Åtgärder.
+      default: notify.notify
+      selector:
+        text:
+    dashboard_path:
+      name: Sida som öppnas vid tryck
+      description: Sökvägen i Home Assistant, till exempel /lovelace/skola
+      default: /lovelace/0
+      selector:
+        text:
+
+variables:
+  unread_sensor_entity: !input unread_sensor
+  dashboard_url: !input dashboard_path
+  items: "{{ state_attr(unread_sensor_entity, 'notifications') or [] }}"
+  messages: >-
+    {{ items | selectattr('type', 'eq', 'MessageCreated')
+             | selectattr('body') | list }}
+
+trigger:
+  - platform: state
+    entity_id: !input unread_sensor
+
+condition:
+  - condition: template
+    value_template: >-
+      {{ trigger.to_state.state | int(0) > trigger.from_state.state | int(0) }}
+
+action:
+  - action: !input notify_service
+    data:
+      title: >-
+        {{ messages[0].subject if messages and messages[0].subject else 'Skolan' }}
+      message: >-
+        {{ messages[0].body if messages else (trigger.to_state.state ~ ' nya händelser från skolan') }}
+      data:
+        url: "{{ dashboard_url }}"
+        clickAction: "{{ dashboard_url }}"
+
+mode: single
