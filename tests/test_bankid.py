@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import aiohttp
 import pytest
+from aiohttp import web
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
@@ -493,3 +494,84 @@ async def test_trace_is_written_off_the_event_loop_in_order(
     assert written == [f"line {index}" for index in range(20)]
     assert opened_on
     assert loop_thread not in opened_on
+
+
+# -- what goes on the wire ---------------------------------------------------- #
+
+# A SAML HTTP-Redirect query as SiteMinder sends it: the signature covers these
+# exact octets, so ``%2F``, ``%3A`` and lower-case hex must reach the server
+# unchanged.
+SIGNED_QUERY = (
+    "SAMLRequest=fZJNT8Mw%2BbL%2Fx%3D%3D&SAMLTRANSACTIONID=4a5c-91"
+    "&SMASSERTIONREF=QUERY"
+    "&SigAlg=http%3A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig-more%23rsa-sha256"
+    "&Signature=Ab%2bcd%2fef%3d%3d"
+)
+
+
+async def test_signed_redirect_is_sent_byte_for_byte(
+    aiohttp_client, socket_enabled
+) -> None:
+    """The query of a followed address is not re-encoded on the way out."""
+    received: list[str] = []
+
+    async def saml2sso(request: web.Request) -> web.Response:
+        received.append(request.raw_path)
+        return web.Response(text="ok")
+
+    app = web.Application()
+    app.router.add_get("/affwebservices/public/saml2sso", saml2sso)
+    client = await aiohttp_client(app)
+    protocol = BankIdProtocol(client.session)
+
+    url = str(client.make_url("/affwebservices/public/saml2sso"))
+    await protocol._request("GET", f"{url}?{SIGNED_QUERY}")
+
+    assert received == [f"/affwebservices/public/saml2sso?{SIGNED_QUERY}"]
+
+
+async def test_cookie_trace_names_scopes_but_not_values(
+    aiohttp_client, socket_enabled, trace_lines
+) -> None:
+    """Two SMSESSION cookies in one answer are told apart by scope only."""
+
+    async def redirect_jsp(_request: web.Request) -> web.Response:
+        response = web.Response(status=302, headers={"Location": "/next"})
+        response.headers.add(
+            "Set-Cookie", "SMSESSION=SECRETSESSION; path=/; domain=.stockholm.se"
+        )
+        response.headers.add("Set-Cookie", "SMSESSION=LOGGEDOFF; path=/; Max-Age=0")
+        return response
+
+    app = web.Application()
+    app.router.add_get("/affwebservices/redirectjsp/medborgareonly.jsp", redirect_jsp)
+    client = await aiohttp_client(app)
+    protocol = BankIdProtocol(client.session)
+
+    url = str(client.make_url("/affwebservices/redirectjsp/medborgareonly.jsp"))
+    await protocol._request("GET", url)
+
+    [line] = [line for line in trace_lines if line.startswith("cookie ")]
+    assert line.endswith(
+        "302 ['SMSESSION', 'SMSESSION'] "
+        "SMSESSION(domain=.stockholm.se path=/),"
+        "SMSESSION(host path=/ logoff deleted)"
+    )
+    assert "SECRET" not in line
+
+
+def test_cookie_scopes_mark_an_expired_cookie() -> None:
+    """A cookie cleared with a past Expires date is marked as deleted."""
+    scopes = bankid._cookie_scopes(
+        [
+            (
+                "SMSESSION=abc; Domain=login001.stockholm.se; Path=/affwebservices; "
+                "Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            ),
+            "JSESSIONID=xyz; Path=/; Secure; HttpOnly",
+        ]
+    )
+    assert scopes == (
+        "SMSESSION(domain=login001.stockholm.se path=/affwebservices deleted),"
+        "JSESSIONID(host path=/)"
+    )
