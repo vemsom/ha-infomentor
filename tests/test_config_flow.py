@@ -722,3 +722,75 @@ async def test_bankid_session_sends_siteminder_cookie_unquoted() -> None:
     finally:
         await session.close()
     assert header == f"SMSESSION={value}"
+
+
+async def test_qr_link_opens_in_a_tab_of_its_own(
+    hass, mock_info_mentor_api, mock_bankid_login
+) -> None:
+    """The QR page link carries target=_blank in the form and in the progress.
+
+    A markdown link to Home Assistant's own address is routed inside the
+    frontend and shows the dashboard instead of the QR page.
+    """
+    mock_bankid_login.gate = asyncio.Event()
+    result = await _open_bankid(hass)
+    placeholders = result["description_placeholders"]
+    qr_url = placeholders["qr_url"]
+    assert placeholders["qr_link_start"] == f'<a href="{qr_url}" target="_blank">'
+    assert placeholders["qr_link_end"] == "</a>"
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.SHOW_PROGRESS
+    assert result["description_placeholders"]["qr_link_start"] == (
+        f'<a href="{qr_url}" target="_blank">'
+    )
+
+    mock_bankid_login.gate.set()
+    await hass.async_block_till_done()
+
+
+async def test_qr_page_says_how_the_attempt_ended(
+    hass, hass_client_no_auth, mock_info_mentor_api, mock_bankid_login
+) -> None:
+    """After a failed attempt the page shows the outcome, never a QR."""
+    mock_bankid_login.outcome = "connection"
+    result = await _open_bankid(hass)
+    qr_path = urlsplit(result["description_placeholders"]["qr_url"]).path
+    await hass.async_block_till_done()
+
+    client = await hass_client_no_auth()
+    frame = await (await client.get(qr_path + "/frame")).json()
+    assert frame == {"matrix": None, "status": "failed", "launch_url": None}
+
+    # Moving the dialog on closes the path at once.
+    result = await _finish_bankid(hass, result["flow_id"])
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert (await client.get(qr_path)).status == 410
+
+
+async def test_qr_page_outcome_expires_without_the_dialog(
+    hass, hass_client_no_auth, mock_info_mentor_api, mock_bankid_login
+) -> None:
+    """The outcome is shown for a bounded time even if nobody returns."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import (
+        async_fire_time_changed,
+    )
+
+    from custom_components.infomentor.config_flow import FINAL_STATUS_SECONDS
+
+    mock_bankid_login.outcome = "cancelled"
+    result = await _open_bankid(hass)
+    qr_path = urlsplit(result["description_placeholders"]["qr_url"]).path
+    await hass.async_block_till_done()
+
+    client = await hass_client_no_auth()
+    assert (await client.get(qr_path)).status == 200
+
+    async_fire_time_changed(
+        hass, dt_util.utcnow() + timedelta(seconds=FINAL_STATUS_SECONDS + 1)
+    )
+    await hass.async_block_till_done()
+    assert (await client.get(qr_path)).status == 410

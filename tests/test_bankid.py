@@ -8,10 +8,17 @@ touches the real service.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from urllib.parse import parse_qs, urlsplit
 
+import aiohttp
 import pytest
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
+from custom_components.infomentor import bankid
+from custom_components.infomentor.api import InfoMentorConnectionError
 from custom_components.infomentor.bankid import (
     MAX_RENEWALS,
     BankIdLogin,
@@ -367,3 +374,122 @@ async def test_rejected_code_error_never_contains_the_code(fake_hosts) -> None:
 
     assert "SECRETCODE" not in str(error.value)
     assert "ACCESS" not in str(error.value)
+
+
+# -- login trace ------------------------------------------------------------ #
+
+
+@pytest.fixture
+def trace_lines(monkeypatch) -> list[str]:
+    """Collect what the login writes to its trace, instead of the file."""
+    lines: list[str] = []
+    monkeypatch.setattr(bankid, "_trace", lines.append)
+    return lines
+
+
+class _FailingSession:
+    """A session whose every request fails the way aiohttp fails it."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    def request(self, *_args, **_kwargs) -> _FailingSession:
+        return self
+
+    async def __aenter__(self) -> None:
+        raise self.error
+
+    async def __aexit__(self, *_exc_info) -> bool:
+        return False
+
+
+async def test_trace_names_the_status_and_step_that_failed(
+    fake_hosts, trace_lines
+) -> None:
+    """An HTTP error is traced with its status, host and path."""
+    fake, client = fake_hosts
+    fake.token_status = 503
+    login = BankIdLogin(client.session, interval=0.01)
+    await login.async_start()
+    await login.async_wait()
+
+    assert login.error == "connection"
+    assert any(
+        line.startswith("http 503 at ")
+        and line.endswith("/Authentication/OAuth2/Token")
+        for line in trace_lines
+    ), trace_lines
+    assert "connection error: InfoMentor token endpoint returned HTTP 503" in (
+        trace_lines
+    )
+    # Host and path only: the query can carry the order or the code.
+    assert not any("?" in line for line in trace_lines if " at " in line)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            aiohttp.ClientResponseError(
+                aiohttp.RequestInfo(
+                    URL("https://login001.stockholm.se/"),
+                    "GET",
+                    CIMultiDictProxy(CIMultiDict()),
+                    URL("https://login001.stockholm.se/"),
+                ),
+                (),
+                status=400,
+                message=(
+                    "Got more than 8190 bytes when reading: Header value is too "
+                    "long: SMSESSION=SECRETSESSION"
+                ),
+            ),
+            "ClientResponseError 400 header-too-long",
+        ),
+        (TimeoutError(), "TimeoutError"),
+        (aiohttp.ServerDisconnectedError(), "ServerDisconnectedError"),
+    ],
+)
+async def test_network_error_trace_keeps_server_bytes_out(
+    trace_lines, error, expected
+) -> None:
+    """A transport error is named, but nothing the server sent is copied."""
+    protocol = BankIdProtocol(_FailingSession(error))
+    with pytest.raises(InfoMentorConnectionError):
+        await protocol._request(
+            "GET",
+            "https://login001.stockholm.se/NECSadc/mbid/b64startpage.jsp"
+            "?startpage=SECRETTARGET",
+        )
+
+    assert trace_lines == [
+        (
+            f"network error {expected} at "
+            "login001.stockholm.se/NECSadc/mbid/b64startpage.jsp"
+        )
+    ]
+    assert "SECRET" not in trace_lines[0]
+
+
+async def test_trace_is_written_off_the_event_loop_in_order(
+    tmp_path, monkeypatch
+) -> None:
+    """The file is opened in the executor, and the lines keep their order."""
+    path = tmp_path / "login.log"
+    monkeypatch.setattr(bankid, "TRACE_FILE", str(path))
+    loop_thread = threading.current_thread()
+    opened_on: list[threading.Thread] = []
+
+    def tracking_open(*args, **kwargs):
+        opened_on.append(threading.current_thread())
+        return open(*args, **kwargs)
+
+    monkeypatch.setattr(bankid, "open", tracking_open, raising=False)
+    for index in range(20):
+        bankid._trace(f"line {index}")
+    await asyncio.get_running_loop().run_in_executor(None, bankid._flush_trace)
+
+    written = [line.split(" ", 1)[1] for line in path.read_text().splitlines()]
+    assert written == [f"line {index}" for index in range(20)]
+    assert opened_on
+    assert loop_thread not in opened_on

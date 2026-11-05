@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Mapping
+from datetime import datetime
+from html import escape
 from typing import Any
 
 import aiohttp
@@ -15,9 +17,10 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlow,
 )
-from homeassistant.core import callback
+from homeassistant.core import CALLBACK_TYPE, HassJob, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 
 from .api import (
     Child,
@@ -27,7 +30,7 @@ from .api import (
     InfoMentorError,
     child_scope_hash,
 )
-from .bankid import BankIdError, BankIdLogin
+from .bankid import BankIdError, BankIdLogin, _trace
 from .const import (
     CONF_CHILDREN,
     CONF_INCLUDE_CHILDCARE,
@@ -82,6 +85,30 @@ BANKID_ERRORS = {
     "connection": "cannot_connect",
 }
 
+# How an attempt can end, as BankIdLogin reports it.
+FINAL_STATUSES = frozenset({"complete", "failed", "cancelled", "timeout"})
+# How long the QR page may keep saying how the attempt ended, at most. The
+# path closes earlier when the dialog moves on or is abandoned.
+FINAL_STATUS_SECONDS = 120
+
+
+def _qr_link_placeholders(url: str) -> dict[str, str]:
+    """Placeholders that make the QR page link open in a tab of its own.
+
+    A markdown link to Home Assistant's own address is caught by the
+    frontend's router, which shows the dashboard instead of the page. A link
+    with ``target`` is left to the browser. The tag is passed as placeholder
+    values because the frontend's message formatter rejects an HTML tag
+    written in the translation itself (``INVALID_TAG``).
+    """
+    if not url:
+        return {"qr_url": "", "qr_link_start": "", "qr_link_end": ""}
+    return {
+        "qr_url": url,
+        "qr_link_start": f'<a href="{escape(url, quote=True)}" target="_blank">',
+        "qr_link_end": "</a>",
+    }
+
 
 class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Log in with BankID (default) or a pasted refresh token."""
@@ -99,6 +126,7 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
         self._bankid_session: aiohttp.ClientSession | None = None
         self._bankid_method = STEP_BANKID
         self._bankid_error: dict[str, str] = {}
+        self._qr_expire: CALLBACK_TYPE | None = None
 
     # -- start -------------------------------------------------------------- #
 
@@ -141,7 +169,7 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
                 step_id="bankid_wait",
                 progress_action="bankid_scan",
                 progress_task=self._login_task,
-                description_placeholders={"qr_url": self._qr.url if self._qr else ""},
+                description_placeholders=self._qr_placeholders(),
             )
 
         errors: dict[str, str] = {}
@@ -153,7 +181,7 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
                 # Without a BankID order there is no QR to show.
                 return self.async_abort(reason="bankid_unavailable")
         placeholders = {
-            "qr_url": self._qr.url if self._qr else "",
+            **self._qr_placeholders(),
             "launch_url": (self._login.launch_url or "") if self._login else "",
         }
         # The link has to be visible and tappable while the attempt runs, so
@@ -197,16 +225,37 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
         self._login_task = self.hass.async_create_task(login.async_wait())
         return True
 
+    def _qr_placeholders(self) -> dict[str, str]:
+        """The QR page link for the dialog text, or empty once it is closed."""
+        return _qr_link_placeholders(self._qr.url if self._qr else "")
+
     @callback
     def _async_bankid_update(
         self, qr_data: str | None, status: str, launch_url: str | None
     ) -> None:
-        """Publish the QR/status, and retire the path when the attempt ends."""
+        """Publish the QR/status; after the attempt, only how it ended."""
         if self._qr is None:
             return
+        if status in FINAL_STATUSES:
+            # The attempt is over: no QR or app link is served again. The page
+            # may still say how it ended, so the person who scanned is not
+            # left with "the page is closed". The path stops working when the
+            # dialog moves on or is abandoned, or after FINAL_STATUS_SECONDS.
+            self._qr.update(None, status, None)
+            if self._qr_expire is None:
+                self._qr_expire = async_call_later(
+                    self.hass,
+                    FINAL_STATUS_SECONDS,
+                    HassJob(self._async_expire_qr, cancel_on_shutdown=True),
+                )
+            return
         self._qr.update(qr_data, status, launch_url)
-        if status in {"complete", "failed", "cancelled", "timeout"}:
-            # The attempt is over: the one-time path must stop working.
+
+    @callback
+    def _async_expire_qr(self, _now: datetime) -> None:
+        """Stop serving the outcome once the grace period is over."""
+        self._qr_expire = None
+        if self._qr is not None:
             self._qr.close()
             self._qr = None
 
@@ -217,10 +266,13 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
         if self._login_task is None:
             return self.async_show_progress_done(next_step_id="bankid_result")
         if not self._login_task.done():
+            # The progress text links the QR page, so it needs the same
+            # placeholders every time it is shown.
             return self.async_show_progress(
                 step_id="bankid_wait",
                 progress_action="bankid_scan",
                 progress_task=self._login_task,
+                description_placeholders=self._qr_placeholders(),
             )
         return self.async_show_progress_done(next_step_id="bankid_result")
 
@@ -243,15 +295,19 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
             # One read proves the grant; nothing is stored without it.
             children = await api.async_validate()
         except InfoMentorAuthError:
+            _trace("validate rejected the new token")
             self._bankid_error = {"base": "invalid_auth"}
             return await self._async_bankid_step(self._bankid_method, None)
-        except InfoMentorConnectionError:
+        except InfoMentorConnectionError as err:
+            _trace(f"validate connection error: {err}")
             self._bankid_error = {"base": "cannot_connect"}
             return await self._async_bankid_step(self._bankid_method, None)
-        except InfoMentorError:
+        except InfoMentorError as err:
+            _trace(f"validate error {type(err).__name__}")
             _LOGGER.debug("InfoMentor BankID validation failed unexpectedly")
             self._bankid_error = {"base": "unknown"}
             return await self._async_bankid_step(self._bankid_method, None)
+        _trace(f"validate ok children={len(children)}")
 
         result = await self._async_finish_login(api, children)
         if result is None:
@@ -261,6 +317,9 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def _async_close_bankid(self) -> None:
         """Stop serving the QR path and release the login transport."""
+        if self._qr_expire is not None:
+            self._qr_expire()
+            self._qr_expire = None
         if self._qr is not None:
             self._qr.close()
             self._qr = None
@@ -390,7 +449,12 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_remove(self) -> None:
         """Make sure an abandoned dialog cannot leave a QR path behind."""
-        if self._qr is None and self._login is None and self._bankid_session is None:
+        if (
+            self._qr is None
+            and self._login is None
+            and self._bankid_session is None
+            and self._qr_expire is None
+        ):
             return
         self.hass.async_create_task(self._async_close_bankid())
 

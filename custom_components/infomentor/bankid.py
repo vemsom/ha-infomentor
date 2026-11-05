@@ -32,7 +32,9 @@ import asyncio
 import json
 import logging
 import re
+import threading
 import time
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -51,13 +53,62 @@ _LOGGER = logging.getLogger(__name__)
 TRACE_FILE = "/config/infomentor-login.log"
 
 
+_TRACE_PENDING: deque[str] = deque()
+_TRACE_LOCK = threading.Lock()
+
+
+def _flush_trace() -> None:
+    """Write the queued trace lines in order; runs in the executor."""
+    with _TRACE_LOCK:
+        lines: list[str] = []
+        while _TRACE_PENDING:
+            lines.append(_TRACE_PENDING.popleft())
+        if not lines:
+            return
+        try:
+            with open(TRACE_FILE, "a", encoding="utf-8") as handle:
+                handle.write("".join(lines))
+        except OSError:
+            pass
+
+
 def _trace(message: str) -> None:
-    """Append one line to the login trace (no secrets, state names only)."""
+    """Queue one line for the login trace (no secrets, state names only).
+
+    The file is written in the executor: an ``open`` on the event loop blocks
+    it, and Home Assistant reports that as a blocking call. The queue and the
+    lock keep the lines in the order they were traced.
+    """
+    _TRACE_PENDING.append(f"{time.strftime('%H:%M:%S')} {message}\n")
     try:
-        with open(TRACE_FILE, "a", encoding="utf-8") as handle:
-            handle.write(f"{time.strftime('%H:%M:%S')} {message}\n")
-    except OSError:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _flush_trace()
+        return
+    try:
+        loop.run_in_executor(None, _flush_trace)
+    except RuntimeError:
+        # The executor is shutting down; the line goes out with the next flush.
         pass
+
+
+def _describe_error(err: BaseException) -> str:
+    """Name a transport error without any bytes the server sent.
+
+    aiohttp's parser messages can quote the header that failed, and that may
+    be a session cookie. Only the class name, the HTTP status and a fixed
+    category leave this function.
+    """
+    parts = [type(err).__name__]
+    status = getattr(err, "status", None)
+    if isinstance(status, int) and status:
+        parts.append(str(status))
+    message = str(getattr(err, "message", "") or "").lower()
+    if "too long" in message or "too large" in message:
+        parts.append("header-too-long")
+    elif "invalid" in message or "bad" in message:
+        parts.append("invalid-response")
+    return " ".join(parts)
 
 
 from .api import (
@@ -265,6 +316,9 @@ class BankIdProtocol:
         kwargs.setdefault("allow_redirects", False)
         headers = {"User-Agent": USER_AGENT}
         headers.update(kwargs.pop("headers", None) or {})
+        # Host and path only: the query can hold the order, a code or TARGET.
+        target = urlsplit(url)
+        where = f"{target.netloc}{target.path[:60]}"
         try:
             async with self._session.request(
                 method,
@@ -280,6 +334,8 @@ class BankIdProtocol:
                         f"cookie {urlsplit(str(response.url)).netloc} "
                         f"{response.status} {names}"
                     )
+                if response.status >= 400:
+                    _trace(f"http {response.status} at {where}")
                 return _Reply(
                     status=response.status,
                     headers=response.headers,
@@ -287,6 +343,7 @@ class BankIdProtocol:
                     url=str(response.url),
                 )
         except (TimeoutError, aiohttp.ClientError) as err:
+            _trace(f"network error {_describe_error(err)} at {where}")
             raise InfoMentorConnectionError(
                 "Could not reach InfoMentor (network error or timeout)"
             ) from err
@@ -837,12 +894,15 @@ class BankIdLogin:
         except BankIdTokenError:
             _trace("token exchange failed")
             self.status, self.error = "failed", "invalid_auth"
-        except InfoMentorConnectionError:
+        except InfoMentorConnectionError as err:
+            # Messages are written without protocol values (see BankIdError).
+            _trace(f"connection error: {err}")
             self.status, self.error = "failed", "connection"
-        except InfoMentorError:
-            _trace("infomentor error")
+        except InfoMentorError as err:
+            _trace(f"infomentor error {type(err).__name__}: {err}")
             self.status, self.error = "failed", "failed"
-        except Exception:  # never leave the dialog spinning
+        except Exception as err:  # never leave the dialog spinning
+            _trace(f"unexpected error {type(err).__name__}")
             _LOGGER.exception("BankID login stopped on an unexpected error")
             self.status, self.error = "failed", "failed"
         finally:
