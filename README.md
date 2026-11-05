@@ -22,8 +22,9 @@ begränsningar*).
 - Home Assistant **2026.10** eller senare.
 - Ett InfoMentor-konto som vårdnadshavare, med minst ett länkat barn.
 - BankID i telefonen.
-- **Två skärmar vid inloggningen.** Home Assistant visar en QR-kod på en skärm
-  och telefonen scannar den. En telefon kan inte scanna sin egen skärm.
+- Inloggningen kan göras på två sätt. Från en dator eller surfplatta skannar du
+  en QR-kod med telefonen. I Home Assistant-appen eller webbläsaren på samma
+  telefon som har BankID öppnar du BankID-appen direkt, utan QR-kod.
 - Inga extra Python-paket. `manifest.json` har `requirements: []` — QR-koden
   ritas av en medföljande ren Python-kodare, allt annat går på `aiohttp` och
   standardbiblioteket.
@@ -56,14 +57,26 @@ Repot har `hacs.json` i roten och integrationen ligger i
 ## Konfiguration
 
 1. *Inställningar → Enheter och tjänster → Lägg till integration → InfoMentor*.
-2. Välj **BankID – skanna QR-kod på en annan enhet**.
-3. Home Assistant visar en länk: *Öppna QR-koden i en webbläsare*. Öppna den på
-   den enhet som ska visa koden — en surfplatta, en dator, en telefon du inte
-   ska scanna med. Sidan innehåller bara QR-koden och en statusrad.
-4. Scanna koden med BankID. Koden roteras automatiskt medan försöket pågår.
-5. När BankID är godkänt går dialogen vidare av sig själv. Har kontot flera
-   länkade barn får du välja vilka som ska få entiteter.
-6. Klart. Integrationen sköter förnyelsen av sin egen session.
+2. Välj hur du vill logga in:
+   - **BankID med QR-kod (skanna med telefonen)** när du använder Home Assistant
+     på en dator eller surfplatta.
+   - **BankID på den här telefonen** när du använder Home Assistant-appen eller
+     webbläsaren på samma telefon som har BankID.
+3. Följ stegen i dialogen.
+   - **Med QR-kod:** tryck på länken *QR-koden*. Den öppnas i en ny flik. Öppna
+     BankID-appen i telefonen, tryck på *Skanna QR-kod* och rikta kameran mot
+     koden. Koden byts ut varje sekund medan försöket pågår, det är meningen.
+     Låt dialogen i Home Assistant vara öppen under tiden.
+   - **På den här telefonen:** tryck på *Öppna BankID*. Godkänn inloggningen i
+     BankID-appen och gå sedan tillbaka till Home Assistant.
+4. När BankID är godkänt går dialogen vidare av sig själv. Du behöver inte
+   trycka på något. Har kontot flera länkade barn får du välja vilka som ska få
+   entiteter.
+5. Klart. Integrationen sköter förnyelsen av sin egen session.
+
+Står dialogen still efter att du har godkänt på samma telefon? Då har
+Home Assistant-appen troligen tappat anslutningen medan du var i BankID-appen.
+Stäng dialogen och logga in igen.
 
 Länken till QR-sidan är en engångslänk: den slutar fungera så fort försöket är
 klart, avbrutet eller har gått ut, och ger inte åtkomst till något annat. Sidan
@@ -131,12 +144,10 @@ de är eller som utgångspunkt.
 - **Att läsa är att läsa.** När texten i ett meddelande hämtas öppnas det hos
   InfoMentor och markeras som läst. Oläst-räknaren i appen och på webben går
   alltså ner när integrationen har hämtat texten.
-- **BankID på samma telefon fungerar inte.** Menyn har alternativet *BankID – på
-  den här telefonen*, men inloggningen fullföljs inte den vägen. Använd QR-koden
-  på en annan skärm.
-- **BankID-inloggningen är inte helt pålitlig än.** Du kan starta en order och
-  godkänna i BankID, men inloggningen kan stanna efter godkännandet i stället
-  för att ge en session. Reservvägen är att klistra in en refresh-token.
+- **Dialogen kan bli stående på samma telefon.** Dialogen går vidare när
+  Home Assistant meddelar appen att inloggningen är klar. Tappar appen
+  anslutningen medan du är i BankID-appen kan det meddelandet gå förlorat, och
+  då sparas inte inloggningen. Stäng dialogen och logga in igen.
 - **QR-koden kräver en nåbar URL.** Sidan måste gå att öppna från enheten som
   visar koden, vilket bakom en reverse proxy kan kräva att den externa URL:en är
   konfigurerad i Home Assistant.
@@ -174,8 +185,12 @@ HTTP-status och oväntat svarsformat.
 **`cannot_connect` i inloggningsdialogen.** Nätverksfel mot InfoMentor, inte fel
 lösenord eller fel konto. Prova igen.
 
-**QR-sidan säger att den är stängd, eller ger 404.** Försöket är slut. Gå
-tillbaka till Home Assistant, som visar nästa steg eller en ny kod.
+**QR-sidan säger att länken är förbrukad.** Försöket är slut eller har gått ut.
+Gå tillbaka till Home Assistant, stäng dialogen och välj BankID igen. Då får du
+en ny QR-kod.
+
+**BankID-appen öppnas inte på telefonen.** Logga in med QR-kod från en dator
+eller surfplatta i stället.
 
 ## Attribution
 
