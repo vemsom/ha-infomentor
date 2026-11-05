@@ -152,13 +152,13 @@ POLL_INTERVAL = 1.0
 # there yet. A browser user simply presses reload again, so the same document
 # request is repeated a few times before the attempt fails.
 MAX_RELOADS = 3
-# Only the retries wait. The first document request after OK is made at once:
-# the page's own three-second pause before ``location.reload()`` only animates
-# its "Legitimeringen verifierad" message, while the completed order is gone
-# from the session by the time that message has been shown. A late reload is
-# answered with a fresh SiteMinder authentication (SiteMinderAuthADC →
-# b64startpage.jsp → a new PhxAuthN) and the chooser page again, identically,
-# for every retry (live trace 2026-11-05 08:43:58).
+# Only the retries wait. The first document request after OK is made at once,
+# like the reference client; the page's three-second pause before
+# ``location.reload()`` only animates its "Legitimeringen verifierad" message.
+# Timing was not the cause of the 2026-11-05 failures: SiteMinderAuthADC did
+# issue SMSESSION for the approved order, but aiohttp's default jar sent it
+# back quoted, login001 rejected it and the chain fell back to the chooser page
+# (see ``config_flow._new_bankid_cookie_jar``).
 RELOAD_RETRY_DELAY = 0.4
 # The Hub's own sign-in page. A chain that ends here never got a session.
 HUB_LOGIN_PATH = "/authentication/authentication/login"
@@ -808,13 +808,10 @@ class BankIdLogin:
             self.status = "verifying"
             self._notify()
             _trace("approved")
-            # The handover is taken at once. The page's script pauses three
-            # seconds first, but that debounce only animates its "Legitimeringen
-            # verifierad" message: a document request made once the pause is
-            # over is answered with a fresh SiteMinder authentication and the
-            # chooser page again, and every retry repeats it byte for byte
-            # (live trace 2026-11-05 08:43:58). The reference client asks the
-            # moment the poll says OK, so this one does too.
+            # The handover is taken at once, as the reference client does. The
+            # session's cookie jar must send SMSESSION unquoted, or login001
+            # rejects the session that the approval just produced (see
+            # ``config_flow._new_bankid_cookie_jar``).
             await protocol.async_finish()
             _trace("saml ok")
             await protocol.async_verify_session()
