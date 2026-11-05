@@ -21,7 +21,7 @@
       },
       "bankid": {
         "title": "Logga in med BankID",
-        "description": "Öppna [QR-koden i en webbläsare]({qr_url}). Skanna den med BankID på en annan enhet, eller tryck på ”Öppna BankID” på sidan för att godkänna i samma telefon. Länken fungerar bara medan den här dialogen är öppen.",
+        "description": "Öppna {qr_link_start}QR-koden i en webbläsare{qr_link_end} och skanna den med BankID på en annan enhet. Tryck på Skicka när du har godkänt. Länken fungerar bara medan den här dialogen är öppen.",
         "data": {}
       },
       "token": {
@@ -40,11 +40,11 @@
       },
       "bankid_wait": {
         "title": "Bekräfta i BankID",
-        "description": "Öppna [inloggningssidan]({qr_url}) och scanna koden med BankID i telefonen. Dialogen går vidare av sig själv när du godkänt."
+        "description": "Öppna {qr_link_start}inloggningssidan{qr_link_end} och skanna koden med BankID i telefonen. Dialogen går vidare av sig själv när du godkänt."
       },
       "bankid_phone": {
         "title": "Logga in med BankID på den här telefonen",
-        "description": "Tryck på [Öppna BankID]({launch_url}) och godkänn. Öppnas inte appen, använd [QR-sidan]({qr_url}) i stället."
+        "description": "Tryck på [Öppna BankID]({launch_url}) och godkänn. Kom sedan tillbaka hit och tryck på Skicka. Öppnas inte appen, använd {qr_link_start}QR-sidan{qr_link_end} i stället."
       }
     },
     "progress": {
