@@ -76,6 +76,11 @@ STEP_BANKID = "bankid"
 STEP_BANKID_PHONE = "bankid_phone"
 STEP_TOKEN = "token"
 MENU_OPTIONS = [STEP_BANKID, STEP_BANKID_PHONE, STEP_TOKEN]
+# The waiting dialog's text per method: the QR page, or the app link.
+PROGRESS_ACTIONS = {
+    STEP_BANKID: "bankid_scan",
+    STEP_BANKID_PHONE: "bankid_phone_scan",
+}
 
 # BankID login outcomes that the form can explain, mapped to error keys.
 BANKID_ERRORS = {
@@ -162,37 +167,41 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _async_bankid_step(
         self, step_id: str, user_input: dict[str, Any] | None
     ) -> ConfigFlowResult:
-        """Start a login, or hand the running attempt to the progress dialog."""
-        self._bankid_method = step_id
-        if self._login is not None and user_input is not None:
-            return self.async_show_progress(
-                step_id="bankid_wait",
-                progress_action="bankid_scan",
-                progress_task=self._login_task,
-                description_placeholders=self._qr_placeholders(),
-            )
+        """Run a login in a waiting dialog that moves on by itself.
 
-        errors: dict[str, str] = {}
-        if self._login is None:
-            errors = self._bankid_error
-            self._bankid_error = {}
-            method = "qr" if step_id == STEP_BANKID else "same_device"
-            if not await self._async_start_bankid(method):
-                # Without a BankID order there is no QR to show.
-                return self.async_abort(reason="bankid_unavailable")
-        placeholders = {
-            **self._qr_placeholders(),
-            "launch_url": (self._login.launch_url or "") if self._login else "",
-        }
-        # The link has to be visible and tappable while the attempt runs, so
-        # the dialog stays on a form. The polling task is already started, so
-        # the button only moves the dialog on; an approval is never missed
-        # because someone forgot to press it.
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=EMPTY_SCHEMA,
-            errors=errors,
-            description_placeholders=placeholders,
+        Home Assistant never refreshes a form when a background task ends, so
+        a form left people pressing Submit after approving in BankID. A
+        progress step is continued by Home Assistant the moment the login task
+        is done, and its text carries the same links. A form is shown only
+        after a failed attempt, to say why; its Submit starts the next one, so
+        no BankID order runs while nobody is looking.
+        """
+        self._bankid_method = step_id
+        if self._login is not None:
+            return self._async_show_bankid_progress()
+        if self._bankid_error and user_input is None:
+            errors, self._bankid_error = self._bankid_error, {}
+            return self.async_show_form(
+                step_id=step_id, data_schema=EMPTY_SCHEMA, errors=errors
+            )
+        self._bankid_error = {}
+        method = "qr" if step_id == STEP_BANKID else "same_device"
+        if not await self._async_start_bankid(method):
+            # Without a BankID order there is no QR or app link to show.
+            return self.async_abort(reason="bankid_unavailable")
+        return self._async_show_bankid_progress()
+
+    @callback
+    def _async_show_bankid_progress(self) -> ConfigFlowResult:
+        """The waiting dialog for the running attempt, with its links."""
+        return self.async_show_progress(
+            step_id="bankid_wait",
+            progress_action=PROGRESS_ACTIONS[self._bankid_method],
+            progress_task=self._login_task,
+            description_placeholders={
+                **self._qr_placeholders(),
+                "launch_url": (self._login.launch_url or "") if self._login else "",
+            },
         )
 
     async def _async_start_bankid(self, method: str) -> bool:
@@ -266,14 +275,9 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
         if self._login_task is None:
             return self.async_show_progress_done(next_step_id="bankid_result")
         if not self._login_task.done():
-            # The progress text links the QR page, so it needs the same
+            # The text links the QR page and the app, so it needs the same
             # placeholders every time it is shown.
-            return self.async_show_progress(
-                step_id="bankid_wait",
-                progress_action="bankid_scan",
-                progress_task=self._login_task,
-                description_placeholders=self._qr_placeholders(),
-            )
+            return self._async_show_bankid_progress()
         return self.async_show_progress_done(next_step_id="bankid_result")
 
     async def async_step_bankid_result(

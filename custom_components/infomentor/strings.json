@@ -21,7 +21,7 @@
       },
       "bankid": {
         "title": "Log in with BankID",
-        "description": "Open {qr_link_start}the QR code in a browser{qr_link_end} and scan it with BankID on another device. Press Submit when you have approved. The link works only while this dialog is open.",
+        "description": "Press Submit to start a new BankID login.",
         "data": {}
       },
       "token": {
@@ -44,11 +44,12 @@
       },
       "bankid_phone": {
         "title": "Log in with BankID on this phone",
-        "description": "Tap [Open BankID]({launch_url}) and approve, then come back here and press Submit. If the link does not open the app, use {qr_link_start}the QR page{qr_link_end} instead."
+        "description": "Press Submit to start a new BankID login on this phone."
       }
     },
     "progress": {
-      "bankid_scan": "Waiting for your approval in BankID…"
+      "bankid_scan": "Open {qr_link_start}the QR code in a browser{qr_link_end} and scan it with BankID on another device. The dialog continues by itself once you have approved. The link works only while this dialog is open.",
+      "bankid_phone_scan": "Tap [Open BankID]({launch_url}) and approve, then come back here. The dialog continues by itself. If the link does not open the app, use {qr_link_start}the QR page{qr_link_end} instead."
     },
     "error": {
       "invalid_auth": "InfoMentor rejected the login.",
