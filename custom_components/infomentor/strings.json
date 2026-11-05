@@ -21,7 +21,7 @@
       },
       "bankid": {
         "title": "Log in with BankID",
-        "description": "Open [the QR code in a browser]({qr_url}). Scan it with BankID on another device, or press “Open BankID” on that page to approve on the same phone. The link works only while this dialog is open.",
+        "description": "Open {qr_link_start}the QR code in a browser{qr_link_end} and scan it with BankID on another device. Press Submit when you have approved. The link works only while this dialog is open.",
         "data": {}
       },
       "token": {
@@ -40,11 +40,11 @@
       },
       "bankid_wait": {
         "title": "Confirm in BankID",
-        "description": "Open [the login page]({qr_url}) and scan the code with BankID on your phone. The dialog continues by itself when you approve."
+        "description": "Open {qr_link_start}the login page{qr_link_end} and scan the code with BankID on your phone. The dialog continues by itself when you approve."
       },
       "bankid_phone": {
         "title": "Log in with BankID on this phone",
-        "description": "Tap [Open BankID]({launch_url}) and approve. If the link does not open the app, use [the QR page]({qr_url}) instead."
+        "description": "Tap [Open BankID]({launch_url}) and approve, then come back here and press Submit. If the link does not open the app, use {qr_link_start}the QR page{qr_link_end} instead."
       }
     },
     "progress": {

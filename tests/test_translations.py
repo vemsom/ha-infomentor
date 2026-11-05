@@ -42,3 +42,23 @@ def test_language_file_covers_every_string(language: str) -> None:
     assert translated["config"]["step"]["user"]["menu_options"], (
         "the menu options need labels or the dialog shows empty rows"
     )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [STRINGS, TRANSLATIONS / "en.json", TRANSLATIONS / "sv.json"],
+    ids=["strings", "en", "sv"],
+)
+def test_qr_page_links_open_in_their_own_tab(path: Path) -> None:
+    """The QR page is linked through the target=_blank placeholders.
+
+    A markdown link to {qr_url} is routed inside the frontend and shows the
+    dashboard. An HTML tag in the text itself breaks the frontend's message
+    formatter, so the tag comes in as placeholder values.
+    """
+    text = path.read_text(encoding="utf-8")
+    assert "]({qr_url})" not in text
+    assert "<a " not in text
+    starts = text.count("{qr_link_start}")
+    assert starts >= 1
+    assert starts == text.count("{qr_link_end}")
