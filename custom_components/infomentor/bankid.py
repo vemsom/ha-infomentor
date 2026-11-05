@@ -113,6 +113,22 @@ def _dump_page(html: str) -> None:
         pass
 
 
+def _trace_jar(session: aiohttp.ClientSession) -> None:
+    """Log the cookie names (never values) the login ended up with."""
+    try:
+        entries = sorted(
+            f"{morsel.key}@{morsel['domain']}" for morsel in session.cookie_jar
+        )
+    except (AttributeError, KeyError, TypeError):
+        return
+    _trace("jar " + ",".join(entries))
+
+
+def _on_hub(url: str) -> bool:
+    """True when a sign-in URL belongs to the Hub, not to the SSO chain."""
+    return urlsplit(url).netloc.endswith(HUB_HOST)
+
+
 def find_client_redirect(html: str) -> str | None:
     """Return a meta-refresh or JavaScript redirect target, if the page has one."""
     for pattern in (_META_REFRESH, _JS_LOCATION):
@@ -133,6 +149,13 @@ START_TIMEOUT = 30
 POLL_INTERVAL = 1.0
 # The page's script waits three seconds after it sees OK before reloading.
 RELOAD_DELAY = 3.0
+# A reload that comes back as the BankID page again means Stockholm had not
+# built the handover yet. A browser user simply presses reload again, so the
+# same document request is repeated a few times before the attempt fails.
+MAX_RELOADS = 3
+RELOAD_RETRY_DELAY = 1.0
+# The Hub's own sign-in page. A chain that ends here never got a session.
+HUB_LOGIN_PATH = "/authentication/authentication/login"
 
 _MBID_HREF = re.compile(
     r"""href\s*=\s*["']([^"']*NECSadc/mbid[^"']*)["']""", re.IGNORECASE
@@ -356,17 +379,23 @@ class BankIdProtocol:
         return state
 
     async def async_finish(self) -> None:
-        """Follow the SAML chain that follows an approved BankID order."""
+        """Follow the handover that follows an approved BankID order.
+
+        The page's own script reloads the document three seconds after it sees
+        ``OK`` (``bankid_scripts.js``, ``case "OK"``), and that reload is the
+        request Stockholm builds the SAML handover for. So this mirrors a
+        browser reload: a plain GET of the page URL, then one redirect or SAML
+        form post per hop — never a form post the browser would not make, and
+        never a return that has not actually reached the Hub.
+        """
         if self._page_url is None:
             raise BankIdProtocolError("No BankID order to finish")
-        # The page's own script polls by AJAX, so its address bar keeps the
-        # bare page URL; that is what a reload requests too.
-        first_url = self._page_url
-        headers = dict(HTML_HEADERS)
-        headers["Referer"] = self._page_url
-        reply = await self._request("GET", first_url, headers=headers)
-        _trace(f"finish start {urlsplit(reply.url).netloc} {reply.status} (start-url)")
-        settle = 0
+        page_url = self._page_url
+        # The page's own script reloads its address bar; no Referer is sent for
+        # a reload, and the reference client sends none either.
+        reply = await self._request("GET", page_url, headers=HTML_HEADERS)
+        _trace(f"finish start {urlsplit(reply.url).netloc} {reply.status} (reload)")
+        reloads = 0
         for _ in range(MAX_SSO_HOPS):
             if reply.status in REDIRECT_STATUSES:
                 location = reply.headers.get("Location")
@@ -385,51 +414,74 @@ class BankIdProtocol:
             text = reply.text()
             form = find_saml_form(text)
             netloc = urlsplit(reply.url).netloc
+            path = urlsplit(reply.url).path
             _trace(
-                f"page {netloc}{urlsplit(reply.url).path[:40]} {reply.status} "
+                f"page {netloc}{path[:40]} {reply.status} "
                 f"form={'yes' if form else 'no'} len={len(reply.body)} "
                 f"saml={'SAML' in text} meta={'http-equiv' in text.lower()} "
                 f"js={'location' in text.lower()} forms={text.lower().count('<form')}"
             )
-            if form is None and netloc.endswith(HUB_HOST):
+            if form is not None:
+                reply = await self._request(
+                    "POST",
+                    validate_url(form.action, reply.url),
+                    data=form.fields,
+                    headers=HTML_HEADERS,
+                )
+                continue
+            if _on_hub(reply.url):
+                # Only a Hub page proves the chain got there; the Hub's own
+                # sign-in page proves it did not.
+                if path.rstrip("/").lower() == HUB_LOGIN_PATH:
+                    raise BankIdProtocolError(
+                        "InfoMentor sign-in ended on the Hub login page"
+                    )
                 return
-            if form is None:
-                # Stockholm's SSO ends on a "continue" page whose single form
-                # carries the next hop. It is not a SAML form, but posting it
-                # is what the browser does.
+            location = find_client_redirect(text)
+            _trace(f"client redirect={bool(location)}")
+            if location is not None:
+                _trace("client-side redirect followed")
+                reply = await self._request(
+                    "GET", validate_url(location, reply.url), headers=HTML_HEADERS
+                )
+                continue
+            if "verifyorder" not in text.lower():
+                # Stockholm's SSO sometimes ends on a "continue" page whose
+                # single form carries the next hop. Posting it is what the
+                # browser does — but never the BankID page's own login form,
+                # because that request is not part of the flow.
                 forms = parse_forms(text)
                 _trace(
-                    f"parsed forms={len(forms)} actions={[urlsplit(f.action).path[:30] for f in forms]}"
+                    f"parsed forms={len(forms)} "
+                    f"actions={[urlsplit(item.action).path[:30] for item in forms]}"
                 )
                 if len(forms) == 1 and forms[0].action:
-                    form = forms[0]
                     _trace(
-                        "single form used fields=" + ",".join(sorted(form.fields))[:80]
+                        "single form used fields="
+                        + ",".join(sorted(forms[0].fields))[:80]
                     )
-            if form is None:
-                _dump_page(text)
-                location = find_client_redirect(text)
-                _trace(f"client redirect={bool(location)}")
-                if location is not None:
-                    _trace("client-side redirect followed")
                     reply = await self._request(
-                        "GET", validate_url(location, reply.url), headers=HTML_HEADERS
+                        "POST",
+                        validate_url(forms[0].action, reply.url),
+                        data=forms[0].fields,
+                        headers=HTML_HEADERS,
                     )
                     continue
-                # The SSO sometimes hands back an intermediate page that only
-                # turns into the next hop a moment later.
-                if settle < 2:
-                    settle += 1
-                    await asyncio.sleep(3.0)
-                    _trace("retry same page")
-                    reply = await self._request("GET", reply.url, headers=HTML_HEADERS)
-                    continue
-                return
-            reply = await self._request(
-                "POST",
-                validate_url(form.action, reply.url),
-                data=form.fields,
-                headers=HTML_HEADERS,
+            # The BankID page again: the handover was not built yet. A browser
+            # would reload the document at this point, so repeat the reload
+            # instead of posting a form or reporting success.
+            if reloads == 0:
+                # Keep the page the chain stalled on for inspection.
+                _dump_page(text)
+            if reloads < MAX_RELOADS:
+                reloads += 1
+                _trace(f"reload {reloads} (no handover yet)")
+                await asyncio.sleep(RELOAD_RETRY_DELAY)
+                reply = await self._request("GET", page_url, headers=HTML_HEADERS)
+                continue
+            raise BankIdProtocolError(
+                "InfoMentor sign-in never left the BankID page; "
+                "the approved order produced no handover"
             )
         raise BankIdProtocolError("InfoMentor sign-in chain exceeded its hop limit")
 
@@ -455,6 +507,12 @@ class BankIdProtocol:
         )
         _trace(f"verify appData {reply.status} len={len(reply.body)}")
         if reply.status != 200:
+            location = reply.headers.get("Location", "")
+            _trace(
+                "verify redirect -> "
+                f"{urlsplit(location).netloc}{urlsplit(location).path[:60]}"
+            )
+            _trace_jar(self._session)
             raise BankIdProtocolError(
                 "The new BankID session was not accepted by the Hub "
                 f"(HTTP {reply.status})"

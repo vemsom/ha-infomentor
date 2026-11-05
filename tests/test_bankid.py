@@ -167,6 +167,87 @@ async def test_login_never_polls_the_order_after_approval(fake_hosts) -> None:
     assert login.refresh_token == "REFRESH"
 
 
+async def test_reload_after_approval_is_a_plain_document_request(
+    fake_hosts, monkeypatch
+) -> None:
+    """The reload carries no Referer, like the browser reload and the reference.
+
+    A reload request the SSO cannot place is one it may answer with the login
+    page again; the working client sends the document request bare, so this
+    one does too.
+    """
+    from custom_components.infomentor import bankid as bankid_module
+
+    monkeypatch.setattr(bankid_module, "RELOAD_RETRY_DELAY", 0)
+    fake, client = fake_hosts
+    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    await login.async_start()
+    await login.async_wait()
+
+    assert login.status == "complete"
+    # The initial page load and the reload after approval.
+    assert len(fake.page_requests) >= 2
+    assert all("Referer" not in headers for headers in fake.page_requests)
+
+
+async def test_finish_reloads_until_the_handover_exists(
+    fake_hosts, monkeypatch
+) -> None:
+    """A reload that answers the BankID page again is repeated, not given up on.
+
+    The handover is built for the reload but is not always there on the first
+    attempt; a browser user would press reload again.
+    """
+    from custom_components.infomentor import bankid as bankid_module
+
+    monkeypatch.setattr(bankid_module, "RELOAD_RETRY_DELAY", 0)
+    fake, client = fake_hosts
+    fake.saml_delay = 2
+    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    await login.async_start()
+    await login.async_wait()
+
+    assert fake.verify_after_ok == 0
+    assert login.status == "complete"
+    assert login.error is None
+    assert login.refresh_token == "REFRESH"
+
+
+async def test_login_fails_when_the_chain_never_leaves_the_bankid_page(
+    fake_hosts, monkeypatch
+) -> None:
+    """No handover means no session: the attempt must fail, not report success.
+
+    This is the reported shape of the bug — "saml ok" in the trace, then the
+    Hub answers 302 — so the chain may never claim a session it does not have.
+    """
+    from custom_components.infomentor import bankid as bankid_module
+
+    monkeypatch.setattr(bankid_module, "RELOAD_RETRY_DELAY", 0)
+    fake, client = fake_hosts
+    fake.saml_delay = 99
+    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    await login.async_start()
+    await login.async_wait()
+
+    assert login.status == "failed"
+    assert login.error == "failed"
+    assert login.refresh_token is None
+
+
+async def test_verify_rejects_the_hub_login_page(fake_hosts) -> None:
+    """The Hub's own login page is the proof that no session was created."""
+    fake, client = fake_hosts
+    fake.hub_authenticates = False
+    protocol = BankIdProtocol(client.session)
+    await protocol.async_begin("qr")
+    await protocol.async_poll()
+    await protocol.async_poll()
+
+    with pytest.raises(BankIdProtocolError):
+        await protocol.async_finish()
+
+
 async def test_login_reports_cancellation(fake_hosts) -> None:
     """A rejected order ends the attempt without any token."""
     fake, client = fake_hosts
