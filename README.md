@@ -231,12 +231,6 @@ av Project Nayuki (MIT), och medföljer oförändrad bortsett från en lint-rad 
 filhuvudet. Den finns med för att integrationen ska kunna rita QR-koden utan
 runtime-beroenden.
 
-Se även [Öppna skolplattformen](https://github.com/kolplattformen/skolplattformen)
-(Apache-2.0), en öppen app för vårdnadshavare i Stockholm med ett eget
-InfoMentor-gränssnitt. Den loggar in med webbens cookie-session i stället för
-mobilappens token, men läser från samma InfoMentor Hub. Ingen kod därifrån
-ingår i den här integrationen.
-
 Det här är en **inofficiell integration**. Den har ingen koppling till
 InfoMentor och används på eget ansvar; varumärket InfoMentor tillhör InfoMentor.
 API:erna är inte publika och kan ändras utan förvarning.
