@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Anslut till InfoMentor",
-        "description": "Välj hur du vill godkänna inloggningen med BankID.\n\n- **QR-kod**: du använder Home Assistant på en dator eller surfplatta och har BankID i telefonen.\n- **Den här telefonen**: Home Assistant och BankID finns i samma telefon.",
+        "description": "Välj hur du vill godkänna inloggningen med BankID.\n\n- **QR-kod**: du använder Home Assistant på en dator eller surfplatta och har BankID i telefonen.\n- **Den här telefonen**: Home Assistant och BankID finns i samma telefon.\n\nRefresh-token behövs bara om BankID inte går att använda.",
         "menu_options": {
           "bankid": "BankID med QR-kod (skanna med telefonen)",
           "token": "Klistra in refresh-token (avancerat)",
@@ -12,7 +12,7 @@
       },
       "reauth": {
         "title": "InfoMentor avvisade inloggningen",
-        "description": "InfoMentor behöver att du loggar in igen. Välj hur du vill godkänna inloggningen med BankID.\n\n- **QR-kod**: du använder Home Assistant på en dator eller surfplatta och har BankID i telefonen.\n- **Den här telefonen**: Home Assistant och BankID finns i samma telefon.",
+        "description": "InfoMentor behöver att du loggar in igen. Välj hur du vill godkänna inloggningen med BankID.\n\n- **QR-kod**: du använder Home Assistant på en dator eller surfplatta och har BankID i telefonen.\n- **Den här telefonen**: Home Assistant och BankID finns i samma telefon.\n\nRefresh-token behövs bara om BankID inte går att använda.",
         "menu_options": {
           "bankid": "BankID med QR-kod (skanna med telefonen)",
           "token": "Klistra in refresh-token (avancerat)",

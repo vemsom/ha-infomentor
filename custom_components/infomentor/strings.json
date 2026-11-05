@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to InfoMentor",
-        "description": "Choose how to approve the login with BankID.\n\n- **QR code**: you use Home Assistant on a computer or tablet and have BankID on your phone.\n- **This phone**: Home Assistant and BankID are on the same phone.",
+        "description": "Choose how to approve the login with BankID.\n\n- **QR code**: you use Home Assistant on a computer or tablet and have BankID on your phone.\n- **This phone**: Home Assistant and BankID are on the same phone.\n\nThe refresh token is only needed if BankID cannot be used.",
         "menu_options": {
           "bankid": "BankID with QR code (scan with your phone)",
           "token": "Paste a refresh token (advanced)",
@@ -12,7 +12,7 @@
       },
       "reauth": {
         "title": "InfoMentor rejected the login",
-        "description": "InfoMentor needs you to log in again. Choose how to approve the login with BankID.\n\n- **QR code**: you use Home Assistant on a computer or tablet and have BankID on your phone.\n- **This phone**: Home Assistant and BankID are on the same phone.",
+        "description": "InfoMentor needs you to log in again. Choose how to approve the login with BankID.\n\n- **QR code**: you use Home Assistant on a computer or tablet and have BankID on your phone.\n- **This phone**: Home Assistant and BankID are on the same phone.\n\nThe refresh token is only needed if BankID cannot be used.",
         "menu_options": {
           "bankid": "BankID with QR code (scan with your phone)",
           "token": "Paste a refresh token (advanced)",
