@@ -6,6 +6,7 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 from typing import ClassVar
+from urllib.parse import urlsplit
 
 import pytest
 from aiohttp import web
@@ -93,6 +94,13 @@ class FakeInfoMentorHosts:
         # the browser never makes — finds the login page again and spends it.
         self.handover_spent = False
         self.verify_after_ok = 0
+        # Reloads that still answer the BankID page before the handover exists.
+        self.saml_delay = 0
+        # Every request for the BankID document: the first page load, then the
+        # reloads that follow the approval.
+        self.page_requests: list[dict[str, str]] = []
+        # False: the Hub accepts the SAML post but never sets a session.
+        self.hub_authenticates = True
 
     def routes(self):
         return [
@@ -101,6 +109,7 @@ class FakeInfoMentorHosts:
             web.get("/sso/NECSadc/mbid", self.bankid),
             web.post("/sso/consume", self.consume),
             web.get("/", self.hub_root),
+            web.get("/Authentication/Authentication/Login", self.hub_login),
             web.post("/timetable/timetable/appData", self.hub_app_data),
             web.post("/account/pair/GetAuthenticationData", self.discovery),
             web.get("/Authentication/Authentication/LoginOAuth2", self.authorize),
@@ -138,23 +147,49 @@ class FakeInfoMentorHosts:
                 self.approved = True
             return web.json_response({"state": state, "qrData": "bankid.QR2"})
         if self.approved and not self.handover_spent:
+            # The reload is the request Stockholm builds the handover for. A
+            # serviced handover still needs a moment here and there, so the
+            # page can come back unchanged a few times first.
+            self.page_requests.append(dict(request.headers))
+            if self.saml_delay > 0:
+                self.saml_delay -= 1
+                return web.Response(text=BANKID_PAGE, content_type="text/html")
             return web.Response(text=SAML_PAGE, content_type="text/html")
+        self.page_requests.append(dict(request.headers))
         return web.Response(text=BANKID_PAGE, content_type="text/html")
 
     async def consume(self, request: web.Request) -> web.Response:
         assert (await request.post())["SAMLResponse"] == "response"
+        if not self.hub_authenticates:
+            # The Hub's single sign-on refuses to mint a session and sends the
+            # browser to its own login page.
+            return web.Response(
+                status=302, headers={"Location": "/Authentication/Authentication/Login"}
+            )
         response = web.Response(status=302, headers={"Location": "/"})
         response.set_cookie("HUBSSO", "ok")
         return response
 
+    async def hub_login(self, request: web.Request) -> web.Response:
+        return web.Response(
+            text="<html><body><form method='post'><p>Logga in</p></form></body></html>",
+            content_type="text/html",
+        )
+
     async def hub_root(self, request: web.Request) -> web.Response:
-        assert request.cookies.get("HUBSSO") == "ok"
+        if request.cookies.get("HUBSSO") != "ok":
+            return web.Response(
+                status=302, headers={"Location": "/Authentication/Authentication/Login"}
+            )
         return web.Response(text=HUB_PAGE, content_type="text/html")
 
     async def hub_app_data(self, request: web.Request) -> web.Response:
-        # The real Hub only answers this for an authenticated cookie session.
+        # The real Hub only answers this for an authenticated cookie session,
+        # and redirects anything else to its own login page.
         if request.cookies.get("HUBSSO") != "ok":
-            return web.Response(status=302, headers={"Location": "/"})
+            return web.Response(
+                status=302, headers={"Location": "/Authentication/Authentication/Login"}
+            )
         return web.json_response({"items": []})
 
     async def discovery(self, request: web.Request) -> web.Response:
@@ -213,6 +248,14 @@ async def fake_hosts(aiohttp_client, monkeypatch, socket_enabled):
     monkeypatch.setattr(bankid_module, "AUTH_ORIGIN", origin)
     monkeypatch.setattr(bankid_module, "API_ORIGIN", origin)
     monkeypatch.setattr(bankid_module, "HUB_ORIGIN", origin)
+    monkeypatch.setattr(bankid_module, "HUB_HOST", urlsplit(origin).netloc)
+    # The fake serves every Swedish host from one origin, so the hub is
+    # recognised by path here: everything outside /sso is the Hub.
+    monkeypatch.setattr(
+        bankid_module,
+        "_on_hub",
+        lambda url: not urlsplit(url).path.startswith("/sso"),
+    )
     monkeypatch.setattr(bankid_module, "SSO_LOGIN_URL", origin + "/sso/login")
     # The fake runs over plain HTTP; the https allowlist has its own tests.
     monkeypatch.setattr(
