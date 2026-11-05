@@ -3,25 +3,25 @@
     "step": {
       "user": {
         "title": "Anslut till InfoMentor",
-        "description": "Logga in med BankID. Ingen token behöver klistras in.",
+        "description": "Välj hur du vill godkänna inloggningen med BankID.\n\n- **QR-kod**: du använder Home Assistant på en dator eller surfplatta och har BankID i telefonen.\n- **Den här telefonen**: Home Assistant och BankID finns i samma telefon.",
         "menu_options": {
-          "bankid": "BankID – skanna QR-kod på en annan enhet",
+          "bankid": "BankID med QR-kod (skanna med telefonen)",
           "token": "Klistra in refresh-token (avancerat)",
-          "bankid_phone": "BankID – på den här telefonen"
+          "bankid_phone": "BankID på den här telefonen"
         }
       },
       "reauth": {
         "title": "InfoMentor avvisade inloggningen",
-        "description": "Autentisera integrationen igen med BankID.",
+        "description": "InfoMentor behöver att du loggar in igen. Välj hur du vill godkänna inloggningen med BankID.\n\n- **QR-kod**: du använder Home Assistant på en dator eller surfplatta och har BankID i telefonen.\n- **Den här telefonen**: Home Assistant och BankID finns i samma telefon.",
         "menu_options": {
-          "bankid": "BankID – skanna QR-kod på en annan enhet",
+          "bankid": "BankID med QR-kod (skanna med telefonen)",
           "token": "Klistra in refresh-token (avancerat)",
-          "bankid_phone": "BankID – på den här telefonen"
+          "bankid_phone": "BankID på den här telefonen"
         }
       },
       "bankid": {
         "title": "Logga in med BankID",
-        "description": "Tryck på Skicka för att starta en ny inloggning med BankID.",
+        "description": "Inloggningen blev inte klar. Tryck på **Skicka** för att försöka igen med en ny QR-kod.",
         "data": {}
       },
       "token": {
@@ -39,17 +39,16 @@
         }
       },
       "bankid_wait": {
-        "title": "Bekräfta i BankID",
-        "description": "Öppna {qr_link_start}inloggningssidan{qr_link_end} och skanna koden med BankID i telefonen. Dialogen går vidare av sig själv när du godkänt."
+        "title": "Logga in med BankID"
       },
       "bankid_phone": {
         "title": "Logga in med BankID på den här telefonen",
-        "description": "Tryck på Skicka för att starta en ny inloggning med BankID på den här telefonen."
+        "description": "Inloggningen blev inte klar. Tryck på **Skicka** för att försöka igen. Du får en ny länk till BankID-appen."
       }
     },
     "progress": {
-      "bankid_scan": "Öppna {qr_link_start}QR-koden i en webbläsare{qr_link_end} och skanna den med BankID på en annan enhet. Dialogen går vidare av sig själv när du har godkänt. Länken fungerar bara medan den här dialogen är öppen.",
-      "bankid_phone_scan": "Tryck på [Öppna BankID]({launch_url}) och godkänn, och kom sedan tillbaka hit. Dialogen går vidare av sig själv. Öppnas inte appen, använd {qr_link_start}QR-sidan{qr_link_end} i stället."
+      "bankid_scan": "1. Öppna {qr_link_start}QR-koden{qr_link_end}. Den öppnas i en ny flik.\n2. Öppna BankID-appen i telefonen och tryck på **Skanna QR-kod**.\n3. Rikta kameran mot koden och godkänn inloggningen i appen.\n4. Kom tillbaka hit. Dialogen går vidare av sig själv.\n\nStäng inte den här dialogen under tiden, för då slutar QR-koden att fungera.",
+      "bankid_phone_scan": "1. Tryck på [Öppna BankID]({launch_url}). BankID-appen öppnas.\n2. Godkänn inloggningen i appen.\n3. Kom tillbaka till Home Assistant. Dialogen går vidare av sig själv.\n\nStår dialogen still fast du har godkänt? Stäng den och logga in igen.\nÖppnas inte BankID-appen? Logga in med QR-kod från en dator i stället."
     },
     "error": {
       "invalid_auth": "InfoMentor avvisade inloggningen.",
@@ -57,8 +56,8 @@
       "unknown": "Oväntat svar från InfoMentor.",
       "no_children": "Välj minst ett barn.",
       "wrong_account": "Inloggningen tillhör ett annat InfoMentor-konto.",
-      "bankid_timeout": "BankID-inloggningen tog för lång tid. Försök igen.",
-      "bankid_cancelled": "BankID-inloggningen avbröts eller avvisades. Försök igen."
+      "bankid_timeout": "Tiden för BankID-inloggningen gick ut.",
+      "bankid_cancelled": "BankID-inloggningen avbröts eller nekades."
     },
     "abort": {
       "already_configured": "Det här InfoMentor-kontot är redan konfigurerat.",

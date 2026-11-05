@@ -207,34 +207,45 @@ body{font:18px/1.5 system-ui,sans-serif;text-align:center;margin:2rem;color:#111
 h1{font-size:1.25rem} p{color:#555}
 </style>
 <h1>Länken är förbrukad</h1>
-<p>Inloggningsförsöket är avslutat eller har gått ut. Gå tillbaka till Home
-Assistant och välj BankID igen – då skapas en ny länk.</p></html>"""
+<p>Det här inloggningsförsöket är avslutat eller har gått ut.</p>
+<p>Gå tillbaka till Home Assistant, stäng inloggningsdialogen och välj BankID
+igen. Då får du en ny QR-kod.</p></html>"""
 
 
 def _page(nonce: str) -> str:
-    """Return the whole page: a canvas, a status line and nothing else."""
+    """Return the whole page: steps, a canvas, a status line and nothing else."""
     return f"""<!doctype html><html lang="sv"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>InfoMentor – logga in med BankID</title><style>
 body{{font:18px/1.4 system-ui,sans-serif;text-align:center;margin:1.5rem;color:#111;background:#fff}}
 h1{{font-size:1.3rem}} canvas{{width:min(88vw,420px);height:auto;image-rendering:pixelated;
-background:#fff}} .btn{{display:inline-block;padding:.9rem 1.4rem;border-radius:10px;
-background:#03a9f4;color:#fff;text-decoration:none;font-weight:600}} p.idle{{color:#555}}
+background:#fff}} ol{{display:inline-block;text-align:left;margin:0 0 1rem;padding-left:1.4rem}}
+p.note{{color:#555;font-size:.9rem}} #status{{font-weight:600}}
 </style>
 <h1>Logga in med BankID</h1>
-<p class="idle">Skanna QR-koden med BankID på en annan enhet. Sidan stängs när
-inloggningen är klar.</p>
+<div id="steps"><ol>
+<li>Öppna BankID-appen i telefonen.</li>
+<li>Tryck på <b>Skanna QR-kod</b>.</li>
+<li>Rikta kameran mot koden här nedanför.</li>
+<li>Godkänn inloggningen i appen.</li>
+</ol></div>
 <canvas id="qr" width="600" height="600" aria-label="BankID QR-kod"></canvas>
-<p id="status">Startar…</p><script nonce="{nonce}">
-const labels={{starting:'Startar…',waiting:'Skanna QR-koden med BankID',
-user_sign:'Godkänn i BankID',verifying:'Verifierar inloggningen…',
-complete:'Klart – gå tillbaka till Home Assistant',cancelled:'Inloggningen avbröts',
-timeout:'Tiden gick ut – försök igen i Home Assistant',failed:'Inloggningen misslyckades',
-closed:'Sidan är stängd – gå tillbaka till Home Assistant'}};
+<p id="status">Startar…</p>
+<p class="note" id="note">Koden byts ut varje sekund. Det är meningen.</p><script nonce="{nonce}">
+const labels={{starting:'Startar…',waiting:'Väntar på att du skannar koden',
+user_sign:'Koden är skannad. Godkänn inloggningen i BankID-appen.',
+verifying:'Godkänt. Loggar in hos InfoMentor…',
+complete:'Klart! Du kan stänga den här fliken och fortsätta i Home Assistant.',
+cancelled:'Inloggningen avbröts. Gå tillbaka till Home Assistant och försök igen.',
+timeout:'Tiden gick ut. Gå tillbaka till Home Assistant och försök igen.',
+failed:'Inloggningen misslyckades. Gå tillbaka till Home Assistant och försök igen.',
+closed:'Den här sidan är inte längre aktiv. Gå tillbaka till Home Assistant.'}};
+const FINAL=['complete','cancelled','timeout','failed'];
 const canvas=document.getElementById('qr'),ctx=canvas.getContext('2d'),
 status=document.getElementById('status');
 const QUIET=4;
+function done(){{for(const id of ['steps','qr','note'])document.getElementById(id).hidden=true;}}
 function draw(m){{ctx.fillStyle='#fff';ctx.fillRect(0,0,600,600);
  if(!m)return; const n=m.length,s=600/(n+2*QUIET);ctx.fillStyle='#000';
  for(let y=0;y<n;y++)for(let x=0;x<n;x++)if(m[y][x])
@@ -243,7 +254,6 @@ async function tick(){{try{{
  const r=await fetch(location.pathname+'/frame',{{cache:'no-store'}}); if(!r.ok)throw new Error();
  const d=await r.json(); status.textContent=labels[d.status]||'Väntar…';
  draw(d.matrix);
- 
- if(!['complete','cancelled','timeout','failed'].includes(d.status))setTimeout(tick,700);
-}}catch(e){{status.textContent=labels.closed;draw(null);}}}}tick();
+ if(FINAL.includes(d.status))done();else setTimeout(tick,700);
+}}catch(e){{status.textContent=labels.closed;done();}}}}tick();
 </script></html>"""
