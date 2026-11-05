@@ -92,16 +92,17 @@ async def _open_menu(hass, source=config_entries.SOURCE_USER):
 
 
 async def _open_bankid(hass, option="bankid"):
-    """Choose a BankID option and return the waiting result.
+    """Choose a BankID option and return the waiting dialog.
 
-    The dialog no longer asks for a Submit: choosing the option starts the
-    attempt and hands the user a waiting dialog with the link in it.
+    Choosing the option starts the attempt and shows a progress step with the
+    links in it; Home Assistant continues it by itself when the login is done.
     """
     result = await _open_menu(hass)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"next_step_id": option}
     )
-    assert result["type"] is FlowResultType.FORM, result
+    assert result["type"] is FlowResultType.SHOW_PROGRESS, result
+    assert result["step_id"] == "bankid_wait"
     return result
 
 
@@ -114,11 +115,8 @@ async def _advance_progress(hass, flow_id):
 
 
 async def _finish_bankid(hass, flow_id):
-    """Press submit and return the outcome of the attempt."""
-    result = await hass.config_entries.flow.async_configure(flow_id, {})
-    if result["type"] is FlowResultType.SHOW_PROGRESS:
-        result = await _advance_progress(hass, flow_id)
-    return result
+    """Let the attempt end and return its outcome, with no Submit pressed."""
+    return await _advance_progress(hass, flow_id)
 
 
 # -- BankID (default path) -------------------------------------------------- #
@@ -140,7 +138,7 @@ async def test_bankid_flow_creates_entry(
     gate = asyncio.Event()
     mock_bankid_login.gate = gate
     result = await _open_bankid(hass)
-    assert result["step_id"] == "bankid"
+    assert result["progress_action"] == "bankid_scan"
     qr_path = urlsplit(result["description_placeholders"]["qr_url"]).path
 
     # While the attempt runs the page is reachable and already shows a QR.
@@ -196,11 +194,20 @@ async def test_bankid_timeout_offers_a_new_qr(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "bankid"
     assert result["errors"] == {"base": "bankid_timeout"}
-    assert result["description_placeholders"]["qr_url"] != first_path
     assert not hass.config_entries.async_entries(DOMAIN)
 
     client = await hass_client_no_auth()
     assert (await client.get(first_path)).status == 410
+
+    # No order runs until Submit asks for one; then a fresh QR is offered.
+    assert len(mock_bankid_login.instances) == 1
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.SHOW_PROGRESS
+    assert len(mock_bankid_login.instances) == 2
+    second_path = urlsplit(result["description_placeholders"]["qr_url"]).path
+    assert second_path != first_path
+    hass.config_entries.flow.async_abort(result["flow_id"])
+    await hass.async_block_till_done()
 
 
 async def test_bankid_cancelled_shows_an_error(
@@ -297,7 +304,8 @@ async def test_bankid_flow_with_the_real_login_chain(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"next_step_id": "bankid"}
     )
-    assert result["step_id"] == "bankid"
+    assert result["type"] is FlowResultType.SHOW_PROGRESS
+    assert result["step_id"] == "bankid_wait"
     qr_path = urlsplit(result["description_placeholders"]["qr_url"]).path
 
     # The page already has a scannable QR when the dialog opens.
@@ -308,8 +316,7 @@ async def test_bankid_flow_with_the_real_login_chain(
     if frame["status"] == "waiting":
         assert frame["matrix"] is not None and len(frame["matrix"]) >= 21
 
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    assert result["type"] is FlowResultType.SHOW_PROGRESS
+    # No Submit: the dialog moves on by itself when the login is done.
     result = await _advance_progress(hass, result["flow_id"])
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -337,8 +344,7 @@ async def test_bankid_phone_step_offers_the_autostart_link(
     mock_bankid_login.gate = gate
     result = await _open_bankid(hass, option="bankid_phone")
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "bankid_phone"
+    assert result["progress_action"] == "bankid_phone_scan"
     # The order is started in the same-device mode, not as a QR order.
     assert mock_bankid_login.instances[0].method == "same_device"
     placeholders = result["description_placeholders"]
@@ -370,8 +376,7 @@ async def test_qr_step_publishes_no_autostart_link(
     mock_bankid_login.gate = gate
     result = await _open_bankid(hass)
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "bankid"
+    assert result["progress_action"] == "bankid_scan"
     assert mock_bankid_login.instances[0].method == "qr"
     # An empty placeholder, never a dangling Markdown link.
     assert result["description_placeholders"]["launch_url"] == ""
@@ -404,8 +409,8 @@ async def test_bankid_phone_flow_with_the_real_login_chain(
         result["flow_id"], {"next_step_id": "bankid_phone"}
     )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "bankid_phone"
+    assert result["type"] is FlowResultType.SHOW_PROGRESS
+    assert result["progress_action"] == "bankid_phone_scan"
     assert fake.initialize_calls == ["bankid"]
     launch = urlsplit(result["description_placeholders"]["launch_url"])
     assert parse_qs(launch.query)["autostarttoken"] == ["AUTOSTART"]
@@ -739,7 +744,8 @@ async def test_qr_link_opens_in_a_tab_of_its_own(
     assert placeholders["qr_link_start"] == f'<a href="{qr_url}" target="_blank">'
     assert placeholders["qr_link_end"] == "</a>"
 
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    # Shown again while the attempt runs, the dialog keeps the same link.
+    result = await hass.config_entries.flow.async_configure(result["flow_id"])
     assert result["type"] is FlowResultType.SHOW_PROGRESS
     assert result["description_placeholders"]["qr_link_start"] == (
         f'<a href="{qr_url}" target="_blank">'
@@ -794,3 +800,31 @@ async def test_qr_page_outcome_expires_without_the_dialog(
     )
     await hass.async_block_till_done()
     assert (await client.get(qr_path)).status == 410
+
+
+async def test_waiting_dialog_moves_on_without_submit(
+    hass, mock_info_mentor_api, mock_bankid_login
+) -> None:
+    """When BankID approves, Home Assistant tells the dialog to move on.
+
+    The frontend continues a progress step on ``data_entry_flow_progressed``;
+    a form would wait for Submit even after the login was done.
+    """
+    from pytest_homeassistant_custom_component.common import async_capture_events
+
+    mock_info_mentor_api.children = [{"id": "pupil-1", "name": "Ella"}]
+    progressed = async_capture_events(hass, "data_entry_flow_progressed")
+    gate = asyncio.Event()
+    mock_bankid_login.gate = gate
+    result = await _open_bankid(hass, option="bankid_phone")
+    # The login task is still waiting for BankID; nothing tells the dialog
+    # to move yet. (block_till_done would wait for the gated task itself.)
+    await asyncio.sleep(0)
+    assert not [e for e in progressed if e.data["flow_id"] == result["flow_id"]]
+
+    gate.set()
+    await hass.async_block_till_done()
+    assert [e for e in progressed if e.data["flow_id"] == result["flow_id"]]
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"])
+    assert result["type"] is FlowResultType.CREATE_ENTRY

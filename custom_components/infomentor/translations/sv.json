@@ -21,7 +21,7 @@
       },
       "bankid": {
         "title": "Logga in med BankID",
-        "description": "Öppna {qr_link_start}QR-koden i en webbläsare{qr_link_end} och skanna den med BankID på en annan enhet. Tryck på Skicka när du har godkänt. Länken fungerar bara medan den här dialogen är öppen.",
+        "description": "Tryck på Skicka för att starta en ny inloggning med BankID.",
         "data": {}
       },
       "token": {
@@ -44,11 +44,12 @@
       },
       "bankid_phone": {
         "title": "Logga in med BankID på den här telefonen",
-        "description": "Tryck på [Öppna BankID]({launch_url}) och godkänn. Kom sedan tillbaka hit och tryck på Skicka. Öppnas inte appen, använd {qr_link_start}QR-sidan{qr_link_end} i stället."
+        "description": "Tryck på Skicka för att starta en ny inloggning med BankID på den här telefonen."
       }
     },
     "progress": {
-      "bankid_scan": "Väntar på ditt godkännande i BankID…"
+      "bankid_scan": "Öppna {qr_link_start}QR-koden i en webbläsare{qr_link_end} och skanna den med BankID på en annan enhet. Dialogen går vidare av sig själv när du har godkänt. Länken fungerar bara medan den här dialogen är öppen.",
+      "bankid_phone_scan": "Tryck på [Öppna BankID]({launch_url}) och godkänn, och kom sedan tillbaka hit. Dialogen går vidare av sig själv. Öppnas inte appen, använd {qr_link_start}QR-sidan{qr_link_end} i stället."
     },
     "error": {
       "invalid_auth": "InfoMentor avvisade inloggningen.",
