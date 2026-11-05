@@ -123,9 +123,11 @@ def _base_url(hass: HomeAssistant) -> str:
 
     The external URL is preferred when one is configured: the QR page has to be
     reachable from the device that displays it, which is not always on the LAN.
+    The Nabu Casa remote UI counts as an external URL here — a cloud-only
+    installation has no other address a phone outside the LAN can open.
     """
     try:
-        return get_url(hass, prefer_external=True, allow_cloud=False).rstrip("/")
+        return get_url(hass, prefer_external=True).rstrip("/")
     except NoURLAvailableError:
         api = hass.config.api
         return f"http://{api.local_ip}:{api.port}"

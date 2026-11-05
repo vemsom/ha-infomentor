@@ -88,6 +88,11 @@ class FakeInfoMentorHosts:
         self.token_status = 200
         self.discovery_authentication_url: str | None = None
         self.initialize_calls: list[str] = []
+        # Stockholm builds the SAML handover once, for the first request that
+        # follows the completed order. A verifyorder poll after OK — a request
+        # the browser never makes — finds the login page again and spends it.
+        self.handover_spent = False
+        self.verify_after_ok = 0
 
     def routes(self):
         return [
@@ -122,11 +127,17 @@ class FakeInfoMentorHosts:
             )
         if "verifyorder" in request.query:
             assert request.query["verifyorder"] == f"ORDER{self.orders}"
+            if self.approved:
+                # The order is already complete: the browser never polls again,
+                # and the handover built for the reload is single use.
+                self.verify_after_ok += 1
+                self.handover_spent = True
+                return web.Response(text=BANKID_PAGE, content_type="text/html")
             state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
             if state == "OK":
                 self.approved = True
             return web.json_response({"state": state, "qrData": "bankid.QR2"})
-        if self.approved:
+        if self.approved and not self.handover_spent:
             return web.Response(text=SAML_PAGE, content_type="text/html")
         return web.Response(text=BANKID_PAGE, content_type="text/html")
 

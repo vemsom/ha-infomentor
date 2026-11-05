@@ -131,6 +131,8 @@ LOGIN_TIMEOUT = 240
 MAX_RENEWALS = 6
 START_TIMEOUT = 30
 POLL_INTERVAL = 1.0
+# The page's script waits three seconds after it sees OK before reloading.
+RELOAD_DELAY = 3.0
 
 _MBID_HREF = re.compile(
     r"""href\s*=\s*["']([^"']*NECSadc/mbid[^"']*)["']""", re.IGNORECASE
@@ -285,7 +287,11 @@ class BankIdProtocol:
             raise BankIdProtocolError("InfoMentor SSO exceeded its redirect limit")
 
         self._method = method
-        initialize = "qr" if method == "qr" else "url"
+        # The page's own script asks for both flavours with initialize=bankid:
+        # qrData for the animated QR (bankid_scripts.js:455) and token for the
+        # autostart link (:429). "url" is a value only this client sends, and
+        # the reference client passes "bankid" here too.
+        initialize = "qr" if method == "qr" else "bankid"
         separator = "&" if "?" in url else "?"
         self._start_url = f"{url}{separator}initialize={initialize}"
         reply = await self._request("GET", self._start_url)
@@ -603,6 +609,7 @@ class BankIdLogin:
         device_name: str = DEVICE_NAME,
         timeout: float = LOGIN_TIMEOUT,
         interval: float = POLL_INTERVAL,
+        reload_delay: float = RELOAD_DELAY,
         on_update: UpdateCallback | None = None,
         protocol_factory: Callable[
             [aiohttp.ClientSession], BankIdProtocol
@@ -613,6 +620,7 @@ class BankIdLogin:
         self._device_name = device_name
         self._timeout = timeout
         self._interval = interval
+        self._reload_delay = reload_delay
         self._on_update = on_update
         self._protocol_factory = protocol_factory
         self.protocol: BankIdProtocol | None = None
@@ -678,16 +686,13 @@ class BankIdLogin:
             self.status = "verifying"
             self._notify()
             _trace("approved")
-            # The page's own script keeps the XHR poll going until it sees OK
-            # and then reloads. One more poll after OK is what flips the SSO
-            # session, and the reload needs the same three seconds the page
-            # waits before it navigates.
-            try:
-                await protocol.async_poll()
-                _trace("poll after ok")
-            except InfoMentorError:
-                _trace("poll after ok failed")
-            await asyncio.sleep(3.5)
+            # The page's own script stops polling the moment it sees OK and
+            # reloads three seconds later (bankid_scripts.js, case "OK"). The
+            # handover that SiteMinder builds for that reload is good for one
+            # request, so a verifyorder poll after approval — a request the
+            # browser never makes — burns it and the reload lands back on the
+            # BankID page with no SAML form.
+            await asyncio.sleep(self._reload_delay)
             await protocol.async_finish()
             _trace("saml ok")
             await protocol.async_verify_session()

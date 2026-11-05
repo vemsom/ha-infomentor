@@ -23,6 +23,30 @@ def test_store_is_shared_per_instance(hass, store) -> None:
     assert hass.data["infomentor_bankid_qr"] is store
 
 
+def test_page_url_may_use_the_cloud_remote_ui(hass, monkeypatch) -> None:
+    """A cloud-only installation must not hand the phone a LAN address.
+
+    The page is opened on the phone that scans the QR. With Nabu Casa and no
+    external URL configured, the remote UI is the only address that reaches it;
+    refusing the cloud URL leaves a 192.168.x.x address the phone cannot open,
+    which is the reported "the QR link does not open at all" on iOS.
+    """
+    from homeassistant.helpers.network import NoURLAvailableError
+
+    from custom_components.infomentor import qr
+
+    def fake_get_url(hass, *, prefer_external=False, allow_cloud=True, **_kwargs):
+        if not allow_cloud:
+            raise NoURLAvailableError
+        return "https://example.ui.nabu.casa"
+
+    monkeypatch.setattr(qr, "get_url", fake_get_url)
+    session = qr.async_get_store(hass).open()
+    assert session.url == (
+        f"https://example.ui.nabu.casa{BASE_PATH}/{session.token}"
+    )
+
+
 def test_matrix_is_a_valid_qr_shape() -> None:
     """The encoder produces a full square QR symbol, not a partial frame."""
     matrix = encode_matrix(QR_PAYLOAD)
