@@ -7,16 +7,21 @@ from dataclasses import dataclass
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .api import InfoMentorApi
 from .const import (
+    CONF_CHILDREN,
     CONF_REFRESH_TOKEN,
+    DOMAIN,
+    ENTRY_TITLE,
     PLATFORMS,
 )
 from .coordinator import InfoMentorCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
 
 type InfoMentorConfigEntry = ConfigEntry[InfoMentorRuntimeData]
 
@@ -31,10 +36,20 @@ class InfoMentorRuntimeData:
 
 async def async_setup_entry(hass: HomeAssistant, entry: InfoMentorConfigEntry) -> bool:
     """Set up InfoMentor from a config entry."""
-    session = async_get_clientsession(hass)
+    _async_neutral_title(hass, entry)
+
+    # A session of its own: the Hub session and the selected pupil live in its
+    # cookies, so they must not be shared with other integrations, a login
+    # dialog or an earlier instance of this entry. Created during setup, it is
+    # detached by Home Assistant when the entry is unloaded.
+    session = async_create_clientsession(hass)
 
     def _store_rotated_token(refresh_token: str) -> None:
-        """Persist a rotated refresh token before it can be lost."""
+        """Persist a rotated refresh token before it can be lost.
+
+        Updating the entry does not reload it: the entry has no update
+        listener, so a rotation is saved without restarting the polling.
+        """
         if refresh_token == entry.data.get(CONF_REFRESH_TOKEN):
             return
         # The old token is already invalid upstream; keep the new one on disk.
@@ -55,7 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: InfoMentorConfigEntry) -
     await coordinator.async_config_entry_first_refresh()
 
     entry.runtime_data = InfoMentorRuntimeData(api=api, coordinator=coordinator)
-    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
+    _async_remove_deselected_devices(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -68,11 +83,47 @@ async def async_unload_entry(hass: HomeAssistant, entry: InfoMentorConfigEntry) 
     return unloaded
 
 
-async def _async_reload_entry(
-    hass: HomeAssistant, entry: InfoMentorConfigEntry
-) -> None:
-    """Reload the entry when its options change."""
-    await hass.config_entries.async_reload(entry.entry_id)
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: ConfigEntry, device: dr.DeviceEntry
+) -> bool:
+    """Allow deleting a device unless it belongs to a selected child."""
+    return not _device_ids(device) & _kept_ids(entry)
+
+
+def _async_neutral_title(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Drop the children's names from a title made by an older version.
+
+    Home Assistant writes the entry title to its log when setup fails or is
+    retried, so a title with the children's names put them in the log. A title
+    the user has set is left alone.
+    """
+    names = [item.get("name", "") for item in entry.data.get(CONF_CHILDREN, [])]
+    if names and entry.title == "InfoMentor " + ", ".join(names):
+        hass.config_entries.async_update_entry(entry, title=ENTRY_TITLE)
+
+
+def _kept_ids(entry: ConfigEntry) -> set[str]:
+    """Device identifiers in use: the selected children and the account."""
+    return {item["id"] for item in entry.data.get(CONF_CHILDREN, [])} | {entry.entry_id}
+
+
+def _device_ids(device: dr.DeviceEntry) -> set[str]:
+    return {value for domain, value in device.identifiers if domain == DOMAIN}
+
+
+def _async_remove_deselected_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove the devices of children that are no longer selected.
+
+    Their entities go with them. Selecting the child again creates them anew.
+    """
+    registry = dr.async_get(hass)
+    kept = _kept_ids(entry)
+    for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
+        ids = _device_ids(device)
+        if ids and not ids & kept:
+            registry.async_update_device(
+                device.id, remove_config_entry_id=entry.entry_id
+            )
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

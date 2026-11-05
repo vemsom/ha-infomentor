@@ -63,7 +63,8 @@
       "already_configured": "Det här InfoMentor-kontot är redan konfigurerat.",
       "reauth_successful": "Omautentiseringen lyckades.",
       "reauth_failed": "Kunde inte hitta posten att autentisera om.",
-      "bankid_unavailable": "Kunde inte starta BankID-inloggningen. Kontrollera anslutningen till InfoMentor och försök igen."
+      "bankid_unavailable": "Kunde inte starta BankID-inloggningen. Kontrollera anslutningen till InfoMentor och försök igen.",
+      "children_already_configured": "Barnen har redan entiteter genom en annan InfoMentor-post."
     }
   },
   "options": {

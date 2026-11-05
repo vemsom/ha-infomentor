@@ -13,13 +13,14 @@ import aiohttp
 import voluptuous as vol
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
 )
-from homeassistant.core import CALLBACK_TYPE, HassJob, callback
+from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.event import async_call_later
 
 from .api import (
@@ -34,9 +35,11 @@ from .bankid import BankIdError, BankIdLogin, _trace
 from .const import (
     CONF_CHILDREN,
     CONF_INCLUDE_CHILDCARE,
+    CONF_LINKED_CHILDREN,
     CONF_REFRESH_TOKEN,
     DEFAULT_INCLUDE_CHILDCARE,
     DOMAIN,
+    ENTRY_TITLE,
 )
 from .qr import QrSession, async_get_store
 
@@ -44,6 +47,48 @@ _LOGGER = logging.getLogger(__name__)
 
 TOKEN_SCHEMA = vol.Schema({vol.Required(CONF_REFRESH_TOKEN): str})
 EMPTY_SCHEMA = vol.Schema({})
+# How long the options dialog waits for the current list of linked pupils.
+LINKED_CHILDREN_TIMEOUT = 30
+
+
+def _child_dicts(children: list[Child]) -> list[dict[str, str]]:
+    return [{"id": child.id, "name": child.name} for child in children]
+
+
+def _stored_children(entry: ConfigEntry, key: str) -> list[Child]:
+    return [Child(id=item["id"], name=item["name"]) for item in entry.data.get(key, [])]
+
+
+def _children_in_other_entries(hass: HomeAssistant, entry_id: str | None) -> set[str]:
+    """Pupils that already have entities through another InfoMentor entry.
+
+    Entity and device ids are per pupil, so one pupil can only be selected in
+    one entry. Two guardians who share a child each get the children the other
+    one has not added.
+    """
+    taken: set[str] = set()
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.entry_id != entry_id:
+            taken.update(item["id"] for item in entry.data.get(CONF_CHILDREN, []))
+    return taken
+
+
+async def _async_validate_token(
+    hass: HomeAssistant, refresh_token: str
+) -> tuple[InfoMentorApi, list[Child]]:
+    """Prove a token with a session of its own, then let the session go.
+
+    The login cookies must not land in a session that another integration or
+    the running entry uses. The connector is Home Assistant's, so the session
+    is detached rather than closed.
+    """
+    session = async_create_clientsession(hass, auto_cleanup=False)
+    try:
+        api = InfoMentorApi(session, refresh_token)
+        children = await api.async_validate()
+    finally:
+        session.detach()
+    return api, children
 
 
 def _new_bankid_cookie_jar(*, unsafe: bool = False) -> aiohttp.CookieJar:
@@ -123,6 +168,7 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._refresh_token: str = ""
         self._children: list[Child] = []
+        self._linked: list[Child] = []
         self._reauth_entry: ConfigEntry | None = None
         # One BankID attempt at a time; config and reauth share the machinery.
         self._login: BankIdLogin | None = None
@@ -294,10 +340,9 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
             self._bankid_error = {"base": BANKID_ERRORS.get(error, "unknown")}
             return await self._async_bankid_step(self._bankid_method, None)
 
-        api = InfoMentorApi(async_get_clientsession(self.hass), refresh_token)
         try:
             # One read proves the grant; nothing is stored without it.
-            children = await api.async_validate()
+            api, children = await _async_validate_token(self.hass, refresh_token)
         except InfoMentorAuthError:
             _trace("validate rejected the new token")
             self._bankid_error = {"base": "invalid_auth"}
@@ -347,9 +392,8 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             token = user_input[CONF_REFRESH_TOKEN].strip()
-            api = InfoMentorApi(async_get_clientsession(self.hass), token)
             try:
-                children = await api.async_validate()
+                api, children = await _async_validate_token(self.hass, token)
             except InfoMentorAuthError:
                 errors["base"] = "invalid_auth"
             except InfoMentorConnectionError:
@@ -380,31 +424,56 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(
             child_scope_hash([child.id for child in children])
         )
-        self._async_abort_entries_match()
-        self._children = children
-        if len(children) == 1:
-            return self._async_create_entry(children)
+        # Only the same set of pupils counts as the same account. Another
+        # guardian, or a second account, gets an entry of its own.
+        self._abort_if_unique_id_configured()
+        self._linked = children
+        taken = _children_in_other_entries(self.hass, None)
+        self._children = [child for child in children if child.id not in taken]
+        if not self._children:
+            return self.async_abort(reason="children_already_configured")
+        if len(self._children) == 1:
+            return self._async_create_entry(self._children)
         return await self.async_step_children()
 
     @callback
     def _async_finish_reauth(
         self, children: list[Child], refresh_token: str
     ) -> ConfigFlowResult | None:
-        """Replace the token on the existing entry, or refuse another account."""
+        """Replace the token on the existing entry, or refuse another account.
+
+        The login belongs to this entry when it reaches at least one of the
+        entry's selected pupils. A sibling linked or unlinked since the entry
+        was made does not count as another account.
+        """
         entry = self._reauth_entry
         if entry is None:
             return self.async_abort(reason="reauth_failed")
-        scope = child_scope_hash([child.id for child in children])
-        if entry.unique_id is not None and entry.unique_id != scope:
+        names = {child.id: child.name for child in children}
+        selected = entry.data.get(CONF_CHILDREN, [])
+        still_selected = [
+            {"id": item["id"], "name": names[item["id"]]}
+            for item in selected
+            if item["id"] in names
+        ]
+        if not still_selected:
             # A login for a different account must not replace this entry.
             return None
-        self.hass.config_entries.async_update_entry(
-            entry, data={**entry.data, CONF_REFRESH_TOKEN: refresh_token}
+        scope = child_scope_hash([child.id for child in children])
+        scope_taken = any(
+            other.unique_id == scope
+            for other in self.hass.config_entries.async_entries(DOMAIN)
+            if other.entry_id != entry.entry_id
         )
-        self.hass.async_create_task(
-            self.hass.config_entries.async_reload(entry.entry_id)
+        return self.async_update_reload_and_abort(
+            entry,
+            unique_id=entry.unique_id if scope_taken else scope,
+            data_updates={
+                CONF_REFRESH_TOKEN: refresh_token,
+                CONF_CHILDREN: still_selected,
+                CONF_LINKED_CHILDREN: _child_dicts(children),
+            },
         )
-        return self.async_abort(reason="reauth_successful")
 
     async def async_step_children(
         self, user_input: dict[str, Any] | None = None
@@ -437,13 +506,13 @@ class InfoMentorConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @callback
     def _async_create_entry(self, children: list[Child]) -> ConfigFlowResult:
+        # The title stays neutral: Home Assistant writes it to the log.
         return self.async_create_entry(
-            title="InfoMentor " + ", ".join(child.name for child in children),
+            title=ENTRY_TITLE,
             data={
                 CONF_REFRESH_TOKEN: self._refresh_token,
-                CONF_CHILDREN: [
-                    {"id": child.id, "name": child.name} for child in children
-                ],
+                CONF_CHILDREN: _child_dicts(children),
+                CONF_LINKED_CHILDREN: _child_dicts(self._linked),
             },
             options={CONF_INCLUDE_CHILDCARE: DEFAULT_INCLUDE_CHILDCARE},
         )
@@ -478,34 +547,44 @@ class InfoMentorOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         entry = self.config_entry
-        configured = [
-            Child(id=item["id"], name=item["name"])
-            for item in entry.data.get(CONF_CHILDREN, [])
-        ]
-        options = {child.id: child.name for child in configured}
+        if user_input is None:
+            await self._async_refresh_linked_children()
+        selected = _stored_children(entry, CONF_CHILDREN)
+        # Entries made before 0.1.10 only stored the selected children.
+        linked = _stored_children(entry, CONF_LINKED_CHILDREN) or selected
+        taken = _children_in_other_entries(self.hass, entry.entry_id)
+        available = [child for child in linked if child.id not in taken]
+        available_ids = {child.id for child in available}
+        available += [child for child in selected if child.id not in available_ids]
+        options = {child.id: child.name for child in available}
 
         if user_input is not None:
-            selected = [
+            chosen = [
                 child
-                for child in configured
+                for child in available
                 if child.id in set(user_input[CONF_CHILDREN])
             ]
-            if not selected:
+            if not chosen:
                 errors["base"] = "no_children"
             else:
+                new_options = {
+                    **entry.options,
+                    CONF_INCLUDE_CHILDCARE: user_input[CONF_INCLUDE_CHILDCARE],
+                }
+                changed = new_options != dict(entry.options) or [
+                    child.id for child in chosen
+                ] != [child.id for child in selected]
+                # Both are saved here, before the reload below can start.
                 self.hass.config_entries.async_update_entry(
                     entry,
-                    data={
-                        **entry.data,
-                        CONF_CHILDREN: [
-                            {"id": child.id, "name": child.name} for child in selected
-                        ],
-                    },
+                    data={**entry.data, CONF_CHILDREN: _child_dicts(chosen)},
+                    options=new_options,
                 )
-                return self.async_create_entry(
-                    title="",
-                    data={CONF_INCLUDE_CHILDCARE: user_input[CONF_INCLUDE_CHILDCARE]},
-                )
+                if changed:
+                    # One reload for the whole change. The entry has no update
+                    # listener, so a token rotation never reloads it.
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                return self.async_create_entry(title="", data=new_options)
 
         return self.async_show_form(
             step_id="init",
@@ -513,7 +592,7 @@ class InfoMentorOptionsFlow(OptionsFlow):
                 {
                     vol.Required(
                         CONF_CHILDREN,
-                        default=[child.id for child in configured],
+                        default=[child.id for child in selected],
                     ): cv.multi_select(options),
                     vol.Required(
                         CONF_INCLUDE_CHILDCARE,
@@ -525,3 +604,25 @@ class InfoMentorOptionsFlow(OptionsFlow):
             ),
             errors=errors,
         )
+
+    async def _async_refresh_linked_children(self) -> None:
+        """Ask InfoMentor which pupils are linked now, so new ones can be picked.
+
+        Only when the entry is running. Any failure keeps the stored list.
+        """
+        entry = self.config_entry
+        if entry.state is not ConfigEntryState.LOADED:
+            return
+        try:
+            async with asyncio.timeout(LINKED_CHILDREN_TIMEOUT):
+                children = await entry.runtime_data.api.async_get_children(
+                    with_names=True
+                )
+        except (InfoMentorError, TimeoutError):
+            _LOGGER.debug("Could not list the linked InfoMentor pupils")
+            return
+        linked = _child_dicts(children)
+        if linked != entry.data.get(CONF_LINKED_CHILDREN):
+            self.hass.config_entries.async_update_entry(
+                entry, data={**entry.data, CONF_LINKED_CHILDREN: linked}
+            )

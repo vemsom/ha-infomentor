@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import aiohttp
 import pytest
+import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -20,6 +21,7 @@ from custom_components.infomentor.api import (
 from custom_components.infomentor.const import (
     CONF_CHILDREN,
     CONF_INCLUDE_CHILDCARE,
+    CONF_LINKED_CHILDREN,
     CONF_REFRESH_TOKEN,
     DOMAIN,
 )
@@ -156,6 +158,7 @@ async def test_bankid_flow_creates_entry(
     assert result["data"] == {
         CONF_REFRESH_TOKEN: "QRREFRESH",
         CONF_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
+        CONF_LINKED_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
     }
     assert mock_bankid_login.instances[0].method == "qr"
     # The QR path is closed and forgotten as soon as the attempt is over.
@@ -323,6 +326,7 @@ async def test_bankid_flow_with_the_real_login_chain(
     assert result["data"] == {
         CONF_REFRESH_TOKEN: "REFRESH",
         CONF_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
+        CONF_LINKED_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
     }
     # The whole documented chain was walked, in order, exactly once.
     assert fake.initialize_calls == ["qr"]
@@ -364,6 +368,7 @@ async def test_bankid_phone_step_offers_the_autostart_link(
     assert result["data"] == {
         CONF_REFRESH_TOKEN: "QRREFRESH",
         CONF_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
+        CONF_LINKED_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
     }
 
 
@@ -421,6 +426,7 @@ async def test_bankid_phone_flow_with_the_real_login_chain(
     assert result["data"] == {
         CONF_REFRESH_TOKEN: "REFRESH",
         CONF_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
+        CONF_LINKED_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
     }
     assert fake.token_requests[0]["code"] == "CODE1"
 
@@ -446,8 +452,9 @@ async def test_user_flow_single_child(hass, mock_info_mentor_api) -> None:
     assert result["data"] == {
         CONF_REFRESH_TOKEN: "TOKEN",
         CONF_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
+        CONF_LINKED_CHILDREN: [{"id": "pupil-1", "name": "Ella"}],
     }
-    assert result["title"] == "InfoMentor Ella"
+    assert result["title"] == "InfoMentor"
 
 
 async def test_user_flow_multiple_children(hass, mock_info_mentor_api) -> None:
@@ -472,7 +479,7 @@ async def test_user_flow_multiple_children(hass, mock_info_mentor_api) -> None:
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_CHILDREN] == [{"id": "pupil-2", "name": "Olle"}]
-    assert result["title"] == "InfoMentor Olle"
+    assert result["title"] == "InfoMentor"
 
 
 async def test_user_flow_invalid_auth(hass, mock_info_mentor_api) -> None:
@@ -603,7 +610,14 @@ async def test_reauth_flow_updates_token(hass, mock_info_mentor_api) -> None:
 
 async def test_reauth_rejects_other_account(hass, mock_info_mentor_api) -> None:
     """A token for a different child scope must not replace the entry."""
-    entry = _reauth_entry(unique_id="some-other-scope", entry_id="entry-id-2")
+    entry = _reauth_entry(
+        unique_id="some-other-scope",
+        entry_id="entry-id-2",
+        data={
+            CONF_REFRESH_TOKEN: "OLD",
+            CONF_CHILDREN: [{"id": "pupil-9", "name": "Kim"}],
+        },
+    )
     entry.add_to_hass(hass)
 
     result = await hass.config_entries.flow.async_init(
@@ -630,7 +644,14 @@ async def test_reauth_bankid_rejects_other_account(
     hass, mock_info_mentor_api, mock_bankid_login
 ) -> None:
     """A BankID login for another account is refused the same way."""
-    entry = _reauth_entry(unique_id="some-other-scope", entry_id="entry-id-3")
+    entry = _reauth_entry(
+        unique_id="some-other-scope",
+        entry_id="entry-id-3",
+        data={
+            CONF_REFRESH_TOKEN: "OLD",
+            CONF_CHILDREN: [{"id": "pupil-9", "name": "Kim"}],
+        },
+    )
     entry.add_to_hass(hass)
 
     result = await hass.config_entries.flow.async_init(
@@ -828,3 +849,185 @@ async def test_waiting_dialog_moves_on_without_submit(
 
     result = await hass.config_entries.flow.async_configure(result["flow_id"])
     assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+# -- accounts and children (0.1.10) ------------------------------------------ #
+
+
+async def _token_login(hass, token: str = "TOKEN"):
+    result = await _open_menu(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "token"}
+    )
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_REFRESH_TOKEN: token}
+    )
+
+
+def _existing_entry(hass, children, *, entry_id="first", unique_id=None):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="InfoMentor",
+        data={CONF_REFRESH_TOKEN: "FIRST", CONF_CHILDREN: children},
+        unique_id=unique_id or child_scope_hash([item["id"] for item in children]),
+        entry_id=entry_id,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_second_account_gets_its_own_entry(hass, mock_info_mentor_api) -> None:
+    """Another guardian with other children is not "already configured"."""
+    _existing_entry(hass, [{"id": "pupil-1", "name": "Ella"}])
+    mock_info_mentor_api.children = [{"id": "pupil-3", "name": "Kim"}]
+
+    result = await _token_login(hass)
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_CHILDREN] == [{"id": "pupil-3", "name": "Kim"}]
+    assert result["title"] == "InfoMentor"
+
+
+async def test_shared_child_stays_with_the_entry_that_has_it(
+    hass, mock_info_mentor_api
+) -> None:
+    """A child already in another entry is not offered again.
+
+    Entity ids are per child, so the same child in two entries would clash.
+    """
+    _existing_entry(hass, [{"id": "pupil-1", "name": "Ella"}], unique_id="other")
+    # The default fake account has Ella and Olle.
+
+    result = await _token_login(hass)
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_CHILDREN] == [{"id": "pupil-2", "name": "Olle"}]
+    assert result["data"][CONF_LINKED_CHILDREN] == [
+        {"id": "pupil-1", "name": "Ella"},
+        {"id": "pupil-2", "name": "Olle"},
+    ]
+
+
+async def test_account_whose_children_are_all_taken_aborts(
+    hass, mock_info_mentor_api
+) -> None:
+    _existing_entry(hass, [{"id": "pupil-1", "name": "Ella"}], entry_id="a")
+    _existing_entry(hass, [{"id": "pupil-2", "name": "Olle"}], entry_id="b")
+
+    result = await _token_login(hass)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "children_already_configured"
+
+
+async def test_reauth_accepts_a_newly_linked_sibling(
+    hass, mock_info_mentor_api
+) -> None:
+    """A sibling linked after setup does not make the login another account."""
+    entry = _reauth_entry()
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_REAUTH,
+            "entry_id": entry.entry_id,
+        },
+        data=entry.data,
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "token"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_REFRESH_TOKEN: "NEW"}
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_REFRESH_TOKEN] == "NEW"
+    assert entry.data[CONF_CHILDREN] == [{"id": "pupil-1", "name": "Ella"}]
+    assert entry.data[CONF_LINKED_CHILDREN] == [
+        {"id": "pupil-1", "name": "Ella"},
+        {"id": "pupil-2", "name": "Olle"},
+    ]
+    assert entry.unique_id == child_scope_hash(["pupil-1", "pupil-2"])
+
+
+async def _setup_options_entry(hass, children, linked=None) -> MockConfigEntry:
+    data = {CONF_REFRESH_TOKEN: "TOKEN", CONF_CHILDREN: children}
+    if linked is not None:
+        data[CONF_LINKED_CHILDREN] = linked
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="InfoMentor",
+        data=data,
+        options={CONF_INCLUDE_CHILDCARE: False},
+        unique_id="options-scope",
+        entry_id="entry-options",
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+async def test_options_can_select_a_deselected_child_again(
+    hass, mock_info_mentor_api
+) -> None:
+    """The options list every linked child, not only the selected ones.
+
+    The entry predates 0.1.10 and stored only Ella. The list comes from
+    InfoMentor when the dialog opens.
+    """
+    entry = await _setup_options_entry(hass, [{"id": "pupil-1", "name": "Ella"}])
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    validated = result["data_schema"](
+        {CONF_CHILDREN: ["pupil-1", "pupil-2"], CONF_INCLUDE_CHILDCARE: False}
+    )
+    assert validated[CONF_CHILDREN] == ["pupil-1", "pupil-2"]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_CHILDREN: ["pupil-1", "pupil-2"], CONF_INCLUDE_CHILDCARE: False},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert [item["id"] for item in entry.data[CONF_CHILDREN]] == ["pupil-1", "pupil-2"]
+    # Only the children changed, and the entry was still reloaded for them.
+    assert hass.states.get("calendar.olle_skola") is not None
+
+
+async def test_options_keep_the_stored_list_when_listing_fails(
+    hass, mock_info_mentor_api
+) -> None:
+    entry = await _setup_options_entry(
+        hass,
+        [{"id": "pupil-1", "name": "Ella"}],
+        linked=[{"id": "pupil-1", "name": "Ella"}, {"id": "pupil-2", "name": "Olle"}],
+    )
+    mock_info_mentor_api.list_error = InfoMentorConnectionError("down")
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["data_schema"](
+        {CONF_CHILDREN: ["pupil-2"], CONF_INCLUDE_CHILDCARE: False}
+    )[CONF_CHILDREN] == ["pupil-2"]
+
+
+async def test_options_do_not_offer_a_child_of_another_entry(
+    hass, mock_info_mentor_api
+) -> None:
+    _existing_entry(hass, [{"id": "pupil-2", "name": "Olle"}], entry_id="other")
+    entry = await _setup_options_entry(hass, [{"id": "pupil-1", "name": "Ella"}])
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    with pytest.raises(vol.Invalid):
+        result["data_schema"](
+            {CONF_CHILDREN: ["pupil-2"], CONF_INCLUDE_CHILDCARE: False}
+        )

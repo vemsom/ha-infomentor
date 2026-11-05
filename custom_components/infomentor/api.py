@@ -634,13 +634,19 @@ class InfoMentorApi:
             raise InfoMentorResponseError("InfoMentor token response was not an object")
         access_token = payload.get("access_token")
         refresh_token = payload.get("refresh_token")
-        if not isinstance(access_token, str) or not access_token:
-            raise InfoMentorResponseError(
-                "InfoMentor token response had no access token"
-            )
         if not isinstance(refresh_token, str) or not refresh_token:
             raise InfoMentorResponseError(
                 "InfoMentor token response had no refresh token"
+            )
+        # The old token stops working as soon as a new one is issued. Keep the
+        # new one before anything else in the answer can fail.
+        if refresh_token != self._refresh_token:
+            self._refresh_token = refresh_token
+            if self._on_token_refresh is not None:
+                self._on_token_refresh(refresh_token)
+        if not isinstance(access_token, str) or not access_token:
+            raise InfoMentorResponseError(
+                "InfoMentor token response had no access token"
             )
         expires_in = payload.get("expires_in", 600)
         try:
@@ -651,10 +657,6 @@ class InfoMentorApi:
         self._access_expires_at = time.monotonic() + max(lifetime - 30, 0)
         self._access_token = access_token
         self._hub_ready = False
-        if refresh_token != self._refresh_token:
-            self._refresh_token = refresh_token
-            if self._on_token_refresh is not None:
-                self._on_token_refresh(refresh_token)
 
     async def _async_sso(self) -> None:
         """Bridge the bearer token into a Hub cookie session."""
@@ -718,7 +720,14 @@ class InfoMentorApi:
         raise InfoMentorResponseError("InfoMentor sign-in chain exceeded its hop limit")
 
     async def _async_with_renewal(self, operation: Callable[[], Awaitable[Any]]) -> Any:
-        """Run one read; on an expired Hub session renew once and replay once."""
+        """Run one read; on an expired Hub session renew once and replay once.
+
+        A rejected token or a refused sign-in raises InfoMentorAuthError from
+        the renewal itself. When the renewal succeeds and the Hub still answers
+        with a redirect or an empty page, the token is fine and the Hub is not:
+        a maintenance page, for example. That is a temporary error, so the
+        next poll tries again instead of asking for BankID.
+        """
         try:
             return await operation()
         except _SessionExpired:
@@ -727,8 +736,9 @@ class InfoMentorApi:
             try:
                 return await operation()
             except _SessionExpired as err:
-                raise InfoMentorAuthError(
-                    "InfoMentor Hub session was rejected twice"
+                self._hub_ready = False
+                raise InfoMentorConnectionError(
+                    "InfoMentor Hub did not accept a fresh session; retrying later"
                 ) from err
 
     # -- reads -------------------------------------------------------------- #

@@ -63,7 +63,8 @@
       "already_configured": "This InfoMentor account is already configured.",
       "reauth_successful": "Reauthentication succeeded.",
       "reauth_failed": "Could not find the entry to reauthenticate.",
-      "bankid_unavailable": "Could not start the BankID login. Check the connection to InfoMentor and try again."
+      "bankid_unavailable": "Could not start the BankID login. Check the connection to InfoMentor and try again.",
+      "children_already_configured": "These children already have entities through another InfoMentor entry."
     }
   },
   "options": {
