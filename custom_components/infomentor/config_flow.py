@@ -43,14 +43,30 @@ TOKEN_SCHEMA = vol.Schema({vol.Required(CONF_REFRESH_TOKEN): str})
 EMPTY_SCHEMA = vol.Schema({})
 
 
+def _new_bankid_cookie_jar(*, unsafe: bool = False) -> aiohttp.CookieJar:
+    """A cookie jar that sends every value back exactly as it was set.
+
+    aiohttp's default jar re-quotes a cookie value that holds characters such
+    as ``/`` or ``=``: it sends ``SMSESSION="AbC/dE=="`` where the server set
+    ``SMSESSION=AbC/dE==``. Stockholm's SiteMinder session cookie is base64, so
+    it always contains them. With the quotes, login001 cannot read the session
+    that SiteMinderAuthADC has just issued for the approved BankID order,
+    challenges again and lands on the BankID chooser page: the approval is
+    lost one hop after it succeeded. Browsers and httpx (the reference client)
+    send the value unchanged, so this jar does too.
+    """
+    return aiohttp.CookieJar(unsafe=unsafe, quote_cookie=False)
+
+
 def _new_bankid_session() -> aiohttp.ClientSession:
     """A private session with its own connector and cookie jar.
 
     The BankID login must not share a connector with Home Assistant or with the
     runtime client: closing a session we own is the only way to end an attempt,
     and a shared connector would take every other integration down with it.
+    The jar must not quote cookie values; see ``_new_bankid_cookie_jar``.
     """
-    return aiohttp.ClientSession()
+    return aiohttp.ClientSession(cookie_jar=_new_bankid_cookie_jar())
 
 
 STEP_BANKID = "bankid"

@@ -288,7 +288,9 @@ async def test_bankid_flow_with_the_real_login_chain(
     monkeypatch.setattr(
         config_flow,
         "_new_bankid_session",
-        lambda: aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)),
+        lambda: aiohttp.ClientSession(
+            cookie_jar=config_flow._new_bankid_cookie_jar(unsafe=True)
+        ),
     )
 
     result = await _open_menu(hass)
@@ -392,7 +394,9 @@ async def test_bankid_phone_flow_with_the_real_login_chain(
     monkeypatch.setattr(
         config_flow,
         "_new_bankid_session",
-        lambda: aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)),
+        lambda: aiohttp.ClientSession(
+            cookie_jar=config_flow._new_bankid_cookie_jar(unsafe=True)
+        ),
     )
 
     result = await _open_menu(hass)
@@ -676,3 +680,45 @@ async def test_options_flow_toggles_childcare(hass, mock_info_mentor_api) -> Non
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_INCLUDE_CHILDCARE] is True
     assert entry.runtime_data.coordinator.include_childcare is True
+
+
+def _siteminder_cookie_header(jar: aiohttp.CookieJar, value: str) -> str:
+    """Store SMSESSION as login003 sets it; return what login001 is sent."""
+    from http.cookies import SimpleCookie
+
+    from yarl import URL
+
+    cookie = SimpleCookie()
+    cookie.load(f"SMSESSION={value}; Domain=.stockholm.se; Path=/; Secure")
+    jar.update_cookies(
+        cookie,
+        URL("https://login003.stockholm.se/NECSadcmbid/authenticate/SiteMinderAuthADC"),
+    )
+    sent = jar.filter_cookies(
+        URL("https://login001.stockholm.se/NECSadc/mbid/b64startpage.jsp")
+    )
+    return sent.output(header="", sep=";").strip()
+
+
+async def test_bankid_session_sends_siteminder_cookie_unquoted() -> None:
+    """SMSESSION must reach login001 exactly as SiteMinderAuthADC set it.
+
+    The value is base64, so it holds ``/``, ``+`` and ``=``. aiohttp's default
+    jar wraps such a value in double quotes, which SiteMinder rejects: the
+    approved BankID login then falls back to the chooser page.
+    """
+    from custom_components.infomentor import config_flow
+
+    value = "AAAAAQ/8Kc7+rTz9Qw/AbC0dEf1+Gh2IjK3lMn4=="
+
+    # The control: the default jar is what broke the login.
+    assert _siteminder_cookie_header(aiohttp.CookieJar(), value) == (
+        f'SMSESSION="{value}"'
+    )
+
+    session = config_flow._new_bankid_session()
+    try:
+        header = _siteminder_cookie_header(session.cookie_jar, value)
+    finally:
+        await session.close()
+    assert header == f"SMSESSION={value}"
