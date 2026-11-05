@@ -37,7 +37,8 @@ import time
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from html import unescape
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -45,6 +46,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import aiohttp
+from yarl import URL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +92,45 @@ def _trace(message: str) -> None:
     except RuntimeError:
         # The executor is shutting down; the line goes out with the next flush.
         pass
+
+
+def _cookie_scopes(headers: list[str]) -> str:
+    """Describe where each Set-Cookie applies, never what it holds.
+
+    SiteMinder can set the same cookie twice in one answer, for different
+    domains or paths, or clear one with ``LOGGEDOFF``. Which of them a request
+    carries decides whether the session is accepted, so the trace records the
+    scope of each one. ``LOGGEDOFF`` is SiteMinder's fixed logout marker, not a
+    session value.
+    """
+    described: list[str] = []
+    for header in headers:
+        first, _, rest = header.partition(";")
+        name, _, value = first.partition("=")
+        attributes: dict[str, str] = {}
+        for part in rest.split(";"):
+            key, _, attribute = part.strip().partition("=")
+            if key:
+                attributes[key.lower()] = attribute.strip()
+        flags = [
+            f"domain={attributes['domain']}" if attributes.get("domain") else "host",
+            f"path={attributes.get('path') or '-'}",
+        ]
+        if value.strip().strip('"').upper() == "LOGGEDOFF":
+            flags.append("logoff")
+        if (
+            attributes.get("max-age", "").lstrip("-").isdigit()
+            and int(attributes["max-age"]) <= 0
+        ):
+            flags.append("deleted")
+        elif expires := attributes.get("expires"):
+            try:
+                if parsedate_to_datetime(expires) <= datetime.now(UTC):
+                    flags.append("deleted")
+            except (TypeError, ValueError):
+                flags.append("expires?")
+        described.append(f"{name.strip()}({' '.join(flags)})")
+    return ",".join(described)
 
 
 def _describe_error(err: BaseException) -> str:
@@ -320,9 +361,14 @@ class BankIdProtocol:
         target = urlsplit(url)
         where = f"{target.netloc}{target.path[:60]}"
         try:
+            # The address goes out byte for byte, as a browser and httpx send
+            # it. Given a plain string, aiohttp re-encodes the query (``%2F``
+            # becomes ``/``, ``%3A`` becomes ``:``, hex is upper-cased), and a
+            # SAML redirect is signed over the query exactly as it was encoded:
+            # saml2sso answered HTTP 500 to the re-encoded request.
             async with self._session.request(
                 method,
-                url,
+                URL(url, encoded=True),
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
                 headers=headers,
                 **kwargs,
@@ -332,7 +378,7 @@ class BankIdProtocol:
                     names = [c.split("=", 1)[0].strip() for c in cookies]
                     _trace(
                         f"cookie {urlsplit(str(response.url)).netloc} "
-                        f"{response.status} {names}"
+                        f"{response.status} {names} {_cookie_scopes(cookies)}"
                     )
                 if response.status >= 400:
                     _trace(f"http {response.status} at {where}")
