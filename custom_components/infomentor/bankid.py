@@ -63,6 +63,7 @@ def _trace(message: str) -> None:
 from .api import (
     HTML_HEADERS,
     REDIRECT_STATUSES,
+    HtmlForm,
     InfoMentorConnectionError,
     InfoMentorError,
     find_saml_form,
@@ -147,19 +148,42 @@ LOGIN_TIMEOUT = 240
 MAX_RENEWALS = 6
 START_TIMEOUT = 30
 POLL_INTERVAL = 1.0
-# The page's script waits three seconds after it sees OK before reloading.
-RELOAD_DELAY = 3.0
-# A reload that comes back as the BankID page again means Stockholm had not
-# built the handover yet. A browser user simply presses reload again, so the
-# same document request is repeated a few times before the attempt fails.
+# A reload that comes back as the BankID page again means the handover was not
+# there yet. A browser user simply presses reload again, so the same document
+# request is repeated a few times before the attempt fails.
 MAX_RELOADS = 3
-RELOAD_RETRY_DELAY = 1.0
+# Only the retries wait. The first document request after OK is made at once:
+# the page's own three-second pause before ``location.reload()`` only animates
+# its "Legitimeringen verifierad" message, while the completed order is gone
+# from the session by the time that message has been shown. A late reload is
+# answered with a fresh SiteMinder authentication (SiteMinderAuthADC →
+# b64startpage.jsp → a new PhxAuthN) and the chooser page again, identically,
+# for every retry (live trace 2026-11-05 08:43:58).
+RELOAD_RETRY_DELAY = 0.4
 # The Hub's own sign-in page. A chain that ends here never got a session.
 HUB_LOGIN_PATH = "/authentication/authentication/login"
 
 _MBID_HREF = re.compile(
     r"""href\s*=\s*["']([^"']*NECSadc/mbid[^"']*)["']""", re.IGNORECASE
 )
+
+# The page re-renders with this inline script only while the session still
+# holds the started order, so it is the cheapest proof of "the order is gone".
+_ORDER_SCRIPT = re.compile(r"let\s+order\s*=")
+
+
+def _param_names(url: str) -> str:
+    """Return a URL's query parameter names, plus SiteMinder's reason code.
+
+    Names and the numeric ``SMAUTHREASON`` only: ``TARGET`` holds the protected
+    address, so no value from this URL ever reaches the trace.
+    """
+    query = parse_qs(urlsplit(url).query, keep_blank_values=True)
+    names = ",".join(sorted(query))
+    reason = query.get("SMAUTHREASON")
+    if reason:
+        names += f" reason={reason[0][:3]}"
+    return names
 
 
 class BankIdError(InfoMentorError):
@@ -224,6 +248,9 @@ class BankIdProtocol:
         self._start_url: str | None = None
         self._method = "qr"
         self._order: str | None = None
+        # The handover form, when Stockholm answers the last poll with the
+        # page that carries it instead of a JSON status.
+        self._handover: HtmlForm | None = None
         self.qr_data: str | None = None
         self.launch_url: str | None = None
         self.auth_guid: str | None = None
@@ -344,7 +371,15 @@ class BankIdProtocol:
             )
 
     async def async_poll(self) -> str:
-        """Return the current BankID state, refreshing the QR payload."""
+        """Return the current BankID state, refreshing the QR payload.
+
+        The page's own script sends this as a plain jQuery ``$.get`` and only
+        parses the answer as JSON: ``try { state = JSON.parse(data).state }``
+        with the comment "if no state, go to default switch case". That default
+        branch takes the ``<form>`` out of the answer, moves it into ``#smal``
+        and submits it — it is the handover. So a poll answer that is not JSON
+        is read as the handover document, not as a protocol error.
+        """
         if self._page_url is None or self._order is None:
             raise BankIdProtocolError("No BankID order to poll")
         separator = "&" if "?" in self._page_url else "?"
@@ -354,7 +389,9 @@ class BankIdProtocol:
             f"{self._page_url}{separator}{query}",
             headers={
                 "X-Requested-With": "XMLHttpRequest",
-                "Accept": "application/json",
+                # jQuery's default for $.get with no dataType; asking for
+                # application/json is what keeps the handover away.
+                "Accept": "*/*",
                 "Referer": self._page_url,
             },
         )
@@ -362,8 +399,22 @@ class BankIdProtocol:
             raise InfoMentorConnectionError(
                 f"InfoMentor BankID poll returned HTTP {reply.status}"
             )
+        text = reply.text()
         try:
-            payload = reply.json()
+            payload = json.loads(reply.body)
+        except ValueError:
+            form = find_saml_form(text) or next(
+                (item for item in parse_forms(text) if item.action), None
+            )
+            if form is None:
+                _trace(f"poll not json and no form len={len(reply.body)}")
+                raise BankIdProtocolError(
+                    "BankID answered outside the expected shape; values withheld"
+                ) from None
+            _trace(f"poll handover form fields={','.join(sorted(form.fields))[:40]}")
+            self._handover = form
+            return "OK"
+        try:
             state = payload["state"]
             if state not in BANKID_STATES:
                 raise _InvalidPayload("Unknown state")
@@ -381,20 +432,33 @@ class BankIdProtocol:
     async def async_finish(self) -> None:
         """Follow the handover that follows an approved BankID order.
 
-        The page's own script reloads the document three seconds after it sees
-        ``OK`` (``bankid_scripts.js``, ``case "OK"``), and that reload is the
-        request Stockholm builds the SAML handover for. So this mirrors a
-        browser reload: a plain GET of the page URL, then one redirect or SAML
-        form post per hop — never a form post the browser would not make, and
-        never a return that has not actually reached the Hub.
+        There are two ways the page's script gets the handover, and this
+        follows both: the form can arrive inside the last poll answer (the
+        script's ``default`` branch, which submits it as-is), or the document
+        request that follows the completed order can answer with the SAML form
+        (``case "OK": location.reload()``). The poll form is posted first when
+        it exists; otherwise the document is requested at once, and repeated a
+        few times with a short backoff if the BankID page comes back.
         """
         if self._page_url is None:
             raise BankIdProtocolError("No BankID order to finish")
         page_url = self._page_url
-        # The page's own script reloads its address bar; no Referer is sent for
-        # a reload, and the reference client sends none either.
-        reply = await self._request("GET", page_url, headers=HTML_HEADERS)
-        _trace(f"finish start {urlsplit(reply.url).netloc} {reply.status} (reload)")
+        if self._handover is not None:
+            # What the browser's default branch does: submit the form it found
+            # in the poll answer. Its action is resolved against the page.
+            _trace("finish from the poll handover")
+            reply = await self._request(
+                "POST",
+                validate_url(self._handover.action, page_url),
+                data=self._handover.fields,
+                headers=HTML_HEADERS,
+            )
+        else:
+            # The page's own script reloads its address bar; no Referer is sent
+            # for a reload, and the reference client sends none either. It is
+            # sent immediately: see RELOAD_RETRY_DELAY.
+            reply = await self._request("GET", page_url, headers=HTML_HEADERS)
+        _trace(f"finish start {urlsplit(reply.url).netloc} {reply.status}")
         reloads = 0
         for _ in range(MAX_SSO_HOPS):
             if reply.status in REDIRECT_STATUSES:
@@ -404,6 +468,7 @@ class BankIdProtocol:
                 target = validate_url(location, reply.url)
                 _trace(
                     f"hop {reply.status} -> {urlsplit(target).netloc}{urlsplit(target).path[:60]}"
+                    f" params={_param_names(target)}"
                 )
                 reply = await self._request("GET", target, headers=HTML_HEADERS)
                 continue
@@ -420,6 +485,7 @@ class BankIdProtocol:
                 f"form={'yes' if form else 'no'} len={len(reply.body)} "
                 f"saml={'SAML' in text} meta={'http-equiv' in text.lower()} "
                 f"js={'location' in text.lower()} forms={text.lower().count('<form')}"
+                f" order={_ORDER_SCRIPT.search(text) is not None}"
             )
             if form is not None:
                 reply = await self._request(
@@ -476,7 +542,7 @@ class BankIdProtocol:
             if reloads < MAX_RELOADS:
                 reloads += 1
                 _trace(f"reload {reloads} (no handover yet)")
-                await asyncio.sleep(RELOAD_RETRY_DELAY)
+                await asyncio.sleep(RELOAD_RETRY_DELAY * reloads)
                 reply = await self._request("GET", page_url, headers=HTML_HEADERS)
                 continue
             raise BankIdProtocolError(
@@ -667,7 +733,6 @@ class BankIdLogin:
         device_name: str = DEVICE_NAME,
         timeout: float = LOGIN_TIMEOUT,
         interval: float = POLL_INTERVAL,
-        reload_delay: float = RELOAD_DELAY,
         on_update: UpdateCallback | None = None,
         protocol_factory: Callable[
             [aiohttp.ClientSession], BankIdProtocol
@@ -678,7 +743,6 @@ class BankIdLogin:
         self._device_name = device_name
         self._timeout = timeout
         self._interval = interval
-        self._reload_delay = reload_delay
         self._on_update = on_update
         self._protocol_factory = protocol_factory
         self.protocol: BankIdProtocol | None = None
@@ -744,13 +808,13 @@ class BankIdLogin:
             self.status = "verifying"
             self._notify()
             _trace("approved")
-            # The page's own script stops polling the moment it sees OK and
-            # reloads three seconds later (bankid_scripts.js, case "OK"). The
-            # handover that SiteMinder builds for that reload is good for one
-            # request, so a verifyorder poll after approval — a request the
-            # browser never makes — burns it and the reload lands back on the
-            # BankID page with no SAML form.
-            await asyncio.sleep(self._reload_delay)
+            # The handover is taken at once. The page's script pauses three
+            # seconds first, but that debounce only animates its "Legitimeringen
+            # verifierad" message: a document request made once the pause is
+            # over is answered with a fresh SiteMinder authentication and the
+            # chooser page again, and every retry repeats it byte for byte
+            # (live trace 2026-11-05 08:43:58). The reference client asks the
+            # moment the poll says OK, so this one does too.
             await protocol.async_finish()
             _trace("saml ok")
             await protocol.async_verify_session()

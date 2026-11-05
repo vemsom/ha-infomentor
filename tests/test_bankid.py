@@ -99,7 +99,7 @@ async def test_login_renews_an_expired_order(fake_hosts) -> None:
     """
     fake, client = fake_hosts
     fake.states = ["ERROR", "USER_SIGN", "OK"]
-    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    login = BankIdLogin(client.session, interval=0.01)
     await login.async_start()
     await login.async_wait()
 
@@ -113,7 +113,7 @@ async def test_login_gives_up_after_the_renewal_cap(fake_hosts) -> None:
     """A bank that keeps dropping orders ends as a rejection, not a loop."""
     fake, client = fake_hosts
     fake.states = ["ERROR"] * (MAX_RENEWALS + 2)
-    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    login = BankIdLogin(client.session, interval=0.01)
     await login.async_start()
     await login.async_wait()
 
@@ -130,7 +130,6 @@ async def test_login_saves_only_the_refresh_token(fake_hosts) -> None:
     login = BankIdLogin(
         client.session,
         interval=0.01,
-        reload_delay=0,
         on_update=lambda qr, status, launch: updates.append((qr, status, launch)),
     )
     await login.async_start()
@@ -156,7 +155,7 @@ async def test_login_never_polls_the_order_after_approval(fake_hosts) -> None:
     reported "chooser page, then Hub answers 302" failure.
     """
     fake, client = fake_hosts
-    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    login = BankIdLogin(client.session, interval=0.01)
     await login.async_start()
     await login.async_wait()
 
@@ -180,7 +179,7 @@ async def test_reload_after_approval_is_a_plain_document_request(
 
     monkeypatch.setattr(bankid_module, "RELOAD_RETRY_DELAY", 0)
     fake, client = fake_hosts
-    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    login = BankIdLogin(client.session, interval=0.01)
     await login.async_start()
     await login.async_wait()
 
@@ -188,6 +187,58 @@ async def test_reload_after_approval_is_a_plain_document_request(
     # The initial page load and the reload after approval.
     assert len(fake.page_requests) >= 2
     assert all("Referer" not in headers for headers in fake.page_requests)
+
+
+async def test_handover_in_the_poll_answer_is_submitted_without_a_reload(
+    fake_hosts,
+) -> None:
+    """A poll answer that is not JSON carries the handover; submit it.
+
+    The page's script parses the poll answer as JSON inside a try/catch and its
+    ``default`` switch branch takes the ``<form>`` out of the answer and submits
+    it (bankid_scripts.js:429-511). That is the only form the page ever posts, so
+    our client has to do the same instead of treating the document as a broken
+    status reply.
+    """
+    fake, client = fake_hosts
+    fake.handover_in_poll = True
+    login = BankIdLogin(client.session, interval=0.01)
+    await login.async_start()
+    await login.async_wait()
+
+    assert login.status == "complete"
+    assert login.error is None
+    assert login.refresh_token == "REFRESH"
+    # Only the first document; the handover came from the poll, so the client
+    # never reloaded the BankID page.
+    assert len(fake.page_requests) == 1
+
+
+async def test_handover_is_requested_the_moment_the_order_is_approved(
+    fake_hosts, monkeypatch
+) -> None:
+    """No three-second pause before the first document request.
+
+    The page debounces its reload by three seconds only to animate the
+    "Legitimeringen verifierad" message. On the wire that delay is fatal: the
+    late request is answered with a fresh SiteMinder authentication and the
+    chooser page, three times in a row (live trace 2026-11-05 08:43:58).
+    """
+    import time
+
+    from custom_components.infomentor import bankid as bankid_module
+
+    monkeypatch.setattr(bankid_module, "RELOAD_RETRY_DELAY", 0)
+    _fake, client = fake_hosts
+    started = time.monotonic()
+    login = BankIdLogin(client.session, interval=0.01)
+    await login.async_start()
+    await login.async_wait()
+
+    assert login.status == "complete"
+    # The old RELOAD_DELAY was 3.0; the whole fake flow is otherwise far below
+    # a second.
+    assert time.monotonic() - started < 1.5
 
 
 async def test_finish_reloads_until_the_handover_exists(
@@ -203,7 +254,7 @@ async def test_finish_reloads_until_the_handover_exists(
     monkeypatch.setattr(bankid_module, "RELOAD_RETRY_DELAY", 0)
     fake, client = fake_hosts
     fake.saml_delay = 2
-    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    login = BankIdLogin(client.session, interval=0.01)
     await login.async_start()
     await login.async_wait()
 
@@ -226,7 +277,7 @@ async def test_login_fails_when_the_chain_never_leaves_the_bankid_page(
     monkeypatch.setattr(bankid_module, "RELOAD_RETRY_DELAY", 0)
     fake, client = fake_hosts
     fake.saml_delay = 99
-    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    login = BankIdLogin(client.session, interval=0.01)
     await login.async_start()
     await login.async_wait()
 
@@ -252,7 +303,7 @@ async def test_login_reports_cancellation(fake_hosts) -> None:
     """A rejected order ends the attempt without any token."""
     fake, client = fake_hosts
     fake.states = ["CANCELLED"]
-    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    login = BankIdLogin(client.session, interval=0.01)
     await login.async_start()
     await login.async_wait()
 
@@ -265,7 +316,7 @@ async def test_login_times_out_without_approval(fake_hosts) -> None:
     """An unscanned order ends as a timeout, not as a hang."""
     fake, client = fake_hosts
     fake.states = ["PENDING"]
-    login = BankIdLogin(client.session, interval=0.01, timeout=0.05, reload_delay=0)
+    login = BankIdLogin(client.session, interval=0.01, timeout=0.05)
     await login.async_start()
     await login.async_wait()
 
@@ -278,7 +329,7 @@ async def test_login_maps_a_rejected_code_to_auth_error(fake_hosts) -> None:
     """A refused authorization code is an auth error, not a crash."""
     fake, client = fake_hosts
     fake.token_status = 400
-    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    login = BankIdLogin(client.session, interval=0.01)
     await login.async_start()
     await login.async_wait()
 

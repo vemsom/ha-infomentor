@@ -69,6 +69,18 @@ SAML_PAGE = """
 </body></html>
 """
 
+# The handover as it can arrive inside a poll answer: a whole document whose
+# form is the SAML POST. The page's own script moves that form into ``#smal``
+# and submits it (bankid_scripts.js, the ``default`` switch branch).
+HANDOVER_POLL_PAGE = """
+<html><body>
+<form method="post" action="/sso/consume">
+  <input type="hidden" name="SAMLResponse" value="response"/>
+</form>
+<div class="login-info">Loggar in…</div>
+</body></html>
+"""
+
 HUB_PAGE = """
 <html><body>
 <script>var config = { selectedPupilName : 'Ella' };</script>
@@ -101,6 +113,9 @@ class FakeInfoMentorHosts:
         self.page_requests: list[dict[str, str]] = []
         # False: the Hub accepts the SAML post but never sets a session.
         self.hub_authenticates = True
+        # True: Stockholm answers the approved poll with the handover document
+        # instead of a JSON status (the page's ``default`` switch branch).
+        self.handover_in_poll = False
 
     def routes(self):
         return [
@@ -145,6 +160,14 @@ class FakeInfoMentorHosts:
             state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
             if state == "OK":
                 self.approved = True
+                if self.handover_in_poll:
+                    # The handover arrived in the poll answer itself and is
+                    # spent; the page's script submits that form instead of
+                    # reloading.
+                    self.handover_spent = True
+                    return web.Response(
+                        text=HANDOVER_POLL_PAGE, content_type="text/html"
+                    )
             return web.json_response({"state": state, "qrData": "bankid.QR2"})
         if self.approved and not self.handover_spent:
             # The reload is the request Stockholm builds the handover for. A
