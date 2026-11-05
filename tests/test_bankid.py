@@ -80,7 +80,7 @@ async def test_same_device_order_returns_an_autostart_link(fake_hosts) -> None:
     protocol = BankIdProtocol(client.session)
     await protocol.async_begin("same_device")
 
-    assert fake.initialize_calls == ["url"]
+    assert fake.initialize_calls == ["bankid"]
     assert protocol.qr_data is None
     assert protocol.launch_url is not None
     parsed = urlsplit(protocol.launch_url)
@@ -99,7 +99,7 @@ async def test_login_renews_an_expired_order(fake_hosts) -> None:
     """
     fake, client = fake_hosts
     fake.states = ["ERROR", "USER_SIGN", "OK"]
-    login = BankIdLogin(client.session, interval=0.01)
+    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
     await login.async_start()
     await login.async_wait()
 
@@ -113,7 +113,7 @@ async def test_login_gives_up_after_the_renewal_cap(fake_hosts) -> None:
     """A bank that keeps dropping orders ends as a rejection, not a loop."""
     fake, client = fake_hosts
     fake.states = ["ERROR"] * (MAX_RENEWALS + 2)
-    login = BankIdLogin(client.session, interval=0.01)
+    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
     await login.async_start()
     await login.async_wait()
 
@@ -130,6 +130,7 @@ async def test_login_saves_only_the_refresh_token(fake_hosts) -> None:
     login = BankIdLogin(
         client.session,
         interval=0.01,
+        reload_delay=0,
         on_update=lambda qr, status, launch: updates.append((qr, status, launch)),
     )
     await login.async_start()
@@ -144,11 +145,33 @@ async def test_login_saves_only_the_refresh_token(fake_hosts) -> None:
     assert updates[-1][1] == "complete"
 
 
+async def test_login_never_polls_the_order_after_approval(fake_hosts) -> None:
+    """The first request after OK is the page reload, exactly like the browser.
+
+    Stockholm builds the SAML handover for the first request that follows a
+    completed order. The page's own script stops polling on OK and reloads
+    three seconds later (``case "OK": location.reload()``); a ``verifyorder``
+    poll after approval is a request the browser never makes, spends the
+    handover, and leaves the reload on the BankID page with no SAML form — the
+    reported "chooser page, then Hub answers 302" failure.
+    """
+    fake, client = fake_hosts
+    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
+    await login.async_start()
+    await login.async_wait()
+
+    assert fake.verify_after_ok == 0
+    assert fake.handover_spent is False
+    assert login.status == "complete"
+    assert login.error is None
+    assert login.refresh_token == "REFRESH"
+
+
 async def test_login_reports_cancellation(fake_hosts) -> None:
     """A rejected order ends the attempt without any token."""
     fake, client = fake_hosts
     fake.states = ["CANCELLED"]
-    login = BankIdLogin(client.session, interval=0.01)
+    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
     await login.async_start()
     await login.async_wait()
 
@@ -161,7 +184,7 @@ async def test_login_times_out_without_approval(fake_hosts) -> None:
     """An unscanned order ends as a timeout, not as a hang."""
     fake, client = fake_hosts
     fake.states = ["PENDING"]
-    login = BankIdLogin(client.session, interval=0.01, timeout=0.05)
+    login = BankIdLogin(client.session, interval=0.01, timeout=0.05, reload_delay=0)
     await login.async_start()
     await login.async_wait()
 
@@ -174,7 +197,7 @@ async def test_login_maps_a_rejected_code_to_auth_error(fake_hosts) -> None:
     """A refused authorization code is an auth error, not a crash."""
     fake, client = fake_hosts
     fake.token_status = 400
-    login = BankIdLogin(client.session, interval=0.01)
+    login = BankIdLogin(client.session, interval=0.01, reload_delay=0)
     await login.async_start()
     await login.async_wait()
 

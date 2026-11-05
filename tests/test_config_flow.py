@@ -402,7 +402,7 @@ async def test_bankid_phone_flow_with_the_real_login_chain(
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "bankid_phone"
-    assert fake.initialize_calls == ["url"]
+    assert fake.initialize_calls == ["bankid"]
     launch = urlsplit(result["description_placeholders"]["launch_url"])
     assert parse_qs(launch.query)["autostarttoken"] == ["AUTOSTART"]
 
