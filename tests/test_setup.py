@@ -164,7 +164,7 @@ def test_manifest_and_translations_are_valid() -> None:
     assert manifest["domain"] == "infomentor"
     assert manifest["config_flow"] is True
     assert manifest["iot_class"] == "cloud_polling"
-    assert manifest["version"] == "0.1.2"
+    assert manifest["version"] == "0.1.3"
     assert manifest["requirements"] == []
 
     strings = json.loads((COMPONENT_DIR / "strings.json").read_text("utf-8"))
