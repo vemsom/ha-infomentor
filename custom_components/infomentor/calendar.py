@@ -84,7 +84,7 @@ class InfoMentorSchoolCalendar(InfoMentorEntity, CalendarEntity):
         """The current or next event, used for the calendar's state."""
         now = dt_util.now()
         upcoming = sorted(
-            (event for event in self._events if self._end(event) >= now),
+            (event for event in self._events if self._end(event) > now),
             key=lambda event: self._start(event),
         )
         return upcoming[0] if upcoming else None
@@ -95,13 +95,13 @@ class InfoMentorSchoolCalendar(InfoMentorEntity, CalendarEntity):
         start_date: datetime,
         end_date: datetime,
     ) -> list[CalendarEvent]:
-        """Return events overlapping the requested window."""
+        """Return events overlapping the requested window (half-open, like HA)."""
         window_start = start_date
         window_end = end_date
         return [
             event
             for event in self._events
-            if self._end(event) >= window_start and self._start(event) <= window_end
+            if self._end(event) > window_start and self._start(event) < window_end
         ]
 
     @staticmethod

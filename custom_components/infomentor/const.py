@@ -5,17 +5,31 @@ from __future__ import annotations
 from datetime import timedelta
 
 DOMAIN = "infomentor"
+# Neutral on purpose: Home Assistant writes the entry title to its log.
+ENTRY_TITLE = "InfoMentor"
 MANUFACTURER = "InfoMentor"
 
 # Configuration keys.
 CONF_REFRESH_TOKEN = "refresh_token"
 CONF_CHILDREN = "children"
+# Every pupil linked to the account at the last login, selected or not, so a
+# child that was deselected can be selected again.
+CONF_LINKED_CHILDREN = "linked_children"
 CONF_INCLUDE_CHILDCARE = "include_childcare"
 
 # Defaults.
 DEFAULT_INCLUDE_CHILDCARE = False
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=15)
 NEWS_LIMIT = 10
+# Home Assistant's recorder drops state attributes above 16 KB. Long texts are
+# cut so the attributes stay well below that, with room for UTF-8.
+MAX_NEWS_CONTENT_LENGTH = 6000
+MAX_NOTIFICATION_BODY_LENGTH = 3000
+# The notification list may use this many bytes. Over it, the oldest
+# messages' bodies are shortened first, then left out, so the newest message
+# keeps its text.
+NOTIFICATIONS_BYTE_BUDGET = 14000
+SHORT_NOTIFICATION_BODY_LENGTH = 300
 CALENDAR_DAYS_AHEAD = 30
 CHILDCARE_DAYS_AHEAD = 7
 

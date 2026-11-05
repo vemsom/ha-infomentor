@@ -50,9 +50,12 @@ from yarl import URL
 
 _LOGGER = logging.getLogger(__name__)
 
-# Temporary: Home Assistant's in-memory log is not readable from the add-on, so
-# the login writes its short state sequence to a file while we debug live.
+# Home Assistant's in-memory log is not readable from every install, so with
+# debug logging on, the login writes its short state sequence to a file too.
 TRACE_FILE = "/config/infomentor-login.log"
+# The integration's own logger: "Enable debug logging" on the integration page
+# turns the trace on, and turning it off stops it.
+_INTEGRATION_LOGGER = logging.getLogger(__package__)
 
 
 _TRACE_PENDING: deque[str] = deque()
@@ -79,8 +82,11 @@ def _trace(message: str) -> None:
 
     The file is written in the executor: an ``open`` on the event loop blocks
     it, and Home Assistant reports that as a blocking call. The queue and the
-    lock keep the lines in the order they were traced.
+    lock keep the lines in the order they were traced. Nothing is written
+    unless debug logging is on for the integration.
     """
+    if not _INTEGRATION_LOGGER.isEnabledFor(logging.DEBUG):
+        return
     _TRACE_PENDING.append(f"{time.strftime('%H:%M:%S')} {message}\n")
     try:
         loop = asyncio.get_running_loop()
@@ -195,15 +201,6 @@ _META_REFRESH = re.compile(
 _JS_LOCATION = re.compile(
     r"""location(?:\.href)?\s*=\s*["']([^"']+)["']""", re.IGNORECASE
 )
-
-
-def _dump_page(html: str) -> None:
-    """Keep the last unparsed sign-in page for inspection (his own machine)."""
-    try:
-        with open("/config/infomentor-page.html", "w", encoding="utf-8") as handle:
-            handle.write(html[:200000])
-    except OSError:
-        pass
 
 
 def _trace_jar(session: aiohttp.ClientSession) -> None:
@@ -639,9 +636,6 @@ class BankIdProtocol:
             # The BankID page again: the handover was not built yet. A browser
             # would reload the document at this point, so repeat the reload
             # instead of posting a form or reporting success.
-            if reloads == 0:
-                # Keep the page the chain stalled on for inspection.
-                _dump_page(text)
             if reloads < MAX_RELOADS:
                 reloads += 1
                 _trace(f"reload {reloads} (no handover yet)")

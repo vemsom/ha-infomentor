@@ -9,6 +9,7 @@ touches the real service.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from urllib.parse import parse_qs, urlsplit
 
@@ -388,6 +389,19 @@ def trace_lines(monkeypatch) -> list[str]:
     return lines
 
 
+async def test_trace_is_off_without_debug_logging(tmp_path, monkeypatch, caplog) -> None:
+    """Without debug logging for the integration, no trace file is written."""
+    caplog.set_level(logging.INFO, logger="custom_components.infomentor")
+    path = tmp_path / "login.log"
+    monkeypatch.setattr(bankid, "TRACE_FILE", str(path))
+
+    bankid._trace("start qr")
+    await asyncio.sleep(0)
+
+    assert not path.exists()
+    assert not bankid._TRACE_PENDING
+
+
 class _FailingSession:
     """A session whose every request fails the way aiohttp fails it."""
 
@@ -473,9 +487,10 @@ async def test_network_error_trace_keeps_server_bytes_out(
 
 
 async def test_trace_is_written_off_the_event_loop_in_order(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, caplog
 ) -> None:
     """The file is opened in the executor, and the lines keep their order."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.infomentor")
     path = tmp_path / "login.log"
     monkeypatch.setattr(bankid, "TRACE_FILE", str(path))
     loop_thread = threading.current_thread()

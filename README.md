@@ -22,8 +22,9 @@ begränsningar*).
 - Home Assistant **2026.10** eller senare.
 - Ett InfoMentor-konto som vårdnadshavare, med minst ett länkat barn.
 - BankID i telefonen.
-- **Två skärmar vid inloggningen.** Home Assistant visar en QR-kod på en skärm
-  och telefonen scannar den. En telefon kan inte scanna sin egen skärm.
+- Inloggningen kan göras på två sätt. Från en dator eller surfplatta skannar du
+  en QR-kod med telefonen. I Home Assistant-appen eller webbläsaren på samma
+  telefon som har BankID öppnar du BankID-appen direkt, utan QR-kod.
 - Inga extra Python-paket. `manifest.json` har `requirements: []` — QR-koden
   ritas av en medföljande ren Python-kodare, allt annat går på `aiohttp` och
   standardbiblioteket.
@@ -56,14 +57,26 @@ Repot har `hacs.json` i roten och integrationen ligger i
 ## Konfiguration
 
 1. *Inställningar → Enheter och tjänster → Lägg till integration → InfoMentor*.
-2. Välj **BankID – skanna QR-kod på en annan enhet**.
-3. Home Assistant visar en länk: *Öppna QR-koden i en webbläsare*. Öppna den på
-   den enhet som ska visa koden — en surfplatta, en dator, en telefon du inte
-   ska scanna med. Sidan innehåller bara QR-koden och en statusrad.
-4. Scanna koden med BankID. Koden roteras automatiskt medan försöket pågår.
-5. När BankID är godkänt går dialogen vidare av sig själv. Har kontot flera
-   länkade barn får du välja vilka som ska få entiteter.
-6. Klart. Integrationen sköter förnyelsen av sin egen session.
+2. Välj hur du vill logga in:
+   - **BankID med QR-kod (skanna med telefonen)** när du använder Home Assistant
+     på en dator eller surfplatta.
+   - **BankID på den här telefonen** när du använder Home Assistant-appen eller
+     webbläsaren på samma telefon som har BankID.
+3. Följ stegen i dialogen.
+   - **Med QR-kod:** tryck på länken *QR-koden*. Den öppnas i en ny flik. Öppna
+     BankID-appen i telefonen, tryck på *Skanna QR-kod* och rikta kameran mot
+     koden. Koden byts ut varje sekund medan försöket pågår, det är meningen.
+     Låt dialogen i Home Assistant vara öppen under tiden.
+   - **På den här telefonen:** tryck på *Öppna BankID*. Godkänn inloggningen i
+     BankID-appen och gå sedan tillbaka till Home Assistant.
+4. När BankID är godkänt går dialogen vidare av sig själv. Du behöver inte
+   trycka på något. Har kontot flera länkade barn får du välja vilka som ska få
+   entiteter.
+5. Klart. Integrationen sköter förnyelsen av sin egen session.
+
+Står dialogen still efter att du har godkänt på samma telefon? Då har
+Home Assistant-appen troligen tappat anslutningen medan du var i BankID-appen.
+Stäng dialogen och logga in igen.
 
 Länken till QR-sidan är en engångslänk: den slutar fungera så fort försöket är
 klart, avbrutet eller har gått ut, och ger inte åtkomst till något annat. Sidan
@@ -72,13 +85,19 @@ enheten som visar koden — bakom en reverse proxy kräver det att den externa
 URL:en är satt (se *Kända begränsningar*).
 
 En config entry motsvarar **ett InfoMentor-konto**, det vill säga en
-vårdnadshavare; två medvårdnadshavare med separata konton blir två poster.
+vårdnadshavare. Två vårdnadshavare med var sitt konto kan lägga in var sin
+post. Ett barn kan bara ha entiteter genom en post, så den som lägger in sin
+post sist får de barn som inte redan finns. Har kontot exakt samma barn som en
+befintlig post avbryts tillägget med *redan konfigurerat*.
 
 ### Alternativ
 
 *Inställningar → Enheter och tjänster → InfoMentor → Konfigurera*:
 
-- **Barn** — vilka av kontots länkade barn som ska ha entiteter.
+- **Barn** — vilka av kontots länkade barn som ska ha entiteter. Listan hämtas
+  från InfoMentor när dialogen öppnas, så ett nytt syskon eller ett barn du har
+  valt bort går att välja. Väljer du bort ett barn tas dess enhet och entiteter
+  bort. Barn som redan finns i en annan post visas inte.
 - **Inkludera fritidsschemat** — avstängt som standard. Slås det på hämtas
   fritidsregistreringar sju dagar framåt och läggs in som händelser i barnets
   kalender. Det kostar en extra förfrågan per barn och poll.
@@ -107,6 +126,12 @@ Per hämtning öppnas det nyaste meddelandet plus eventuella olästa, högst tre
 för att inte belasta API:t i onödan. Ett meddelande som redan var läst när
 funktionen infördes får ingen text förrän det är nyast igen.
 
+Home Assistants databas sparar inte attribut som är större än 16 KB. Därför
+har långa texter en gräns. En nyhets `content` kortas efter 6 000 tecken och
+ett meddelandes `body` efter 3 000. Blir listan i `notifications` ändå för
+stor kortas de äldsta meddelandenas text först, och tas sedan bort. Det
+nyaste meddelandet behåller sin text. En förkortad text slutar med `…`.
+
 Attributen är tänkta att användas i automationer och mallar; exempel på det
 finns i [docs/exempel.md](docs/exempel.md).
 
@@ -131,19 +156,18 @@ de är eller som utgångspunkt.
 - **Att läsa är att läsa.** När texten i ett meddelande hämtas öppnas det hos
   InfoMentor och markeras som läst. Oläst-räknaren i appen och på webben går
   alltså ner när integrationen har hämtat texten.
-- **BankID på samma telefon fungerar inte.** Menyn har alternativet *BankID – på
-  den här telefonen*, men inloggningen fullföljs inte den vägen. Använd QR-koden
-  på en annan skärm.
-- **BankID-inloggningen är inte helt pålitlig än.** Du kan starta en order och
-  godkänna i BankID, men inloggningen kan stanna efter godkännandet i stället
-  för att ge en session. Reservvägen är att klistra in en refresh-token.
+- **Dialogen kan bli stående på samma telefon.** Dialogen går vidare när
+  Home Assistant meddelar appen att inloggningen är klar. Tappar appen
+  anslutningen medan du är i BankID-appen kan det meddelandet gå förlorat, och
+  då sparas inte inloggningen. Stäng dialogen och logga in igen.
 - **QR-koden kräver en nåbar URL.** Sidan måste gå att öppna från enheten som
   visar koden, vilket bakom en reverse proxy kan kräva att den externa URL:en är
   konfigurerad i Home Assistant.
 - **Inga bilagor.** Nyhetsbilagor (PDF, DOCX) hämtas inte; bara rubrik, text och
   publiceringsdatum.
-- **Ett konto per config entry.** Två vårdnadshavare med separata konton ger två
-  poster. Samma barnuppsättning kan bara läggas upp en gång.
+- **Ett konto per config entry, ett barn per post.** Två vårdnadshavare med
+  separata konton ger två poster, men ett gemensamt barn får bara entiteter
+  genom den ena.
 - **Kalenderfönstret är idag till 30 dagar framåt.** Ingen historik, eftersom
   varje hämtning annars blir dyrare än den är värd.
 - **Heldagshändelser** blir heldagsposter i Home Assistant; InfoMentors exakta
@@ -153,29 +177,44 @@ de är eller som utgångspunkt.
 
 ## Felsökning
 
-**Sessionen har gått ut.** `sensor.<barn>_session` visar `reauth_required`.
-Öppna integrationen och kör om autentiseringen — BankID-vägen används
-automatiskt. Attributet `notification` säger varför. Ett BankID som tillhör ett
-annat konto avvisas, så en felaktig inloggning kan inte ersätta en fungerande
-post.
+**Sessionen har gått ut.** Home Assistant visar att InfoMentor behöver
+autentiseras igen. Upptäcks det medan integrationen körs visar
+`sensor.<barn>_session` dessutom `reauth_required`, och attributet
+`notification` säger varför. Vid en omstart med en ogiltig token startar
+integrationen inte alls, så då finns bara Home Assistants meddelande. Öppna
+integrationen och logga in igen med BankID. En inloggning godtas om den når
+minst ett av postens barn, så ett nytt syskon gör ingen skillnad. Ett BankID
+för ett konto utan något av postens barn avvisas, så en felaktig inloggning
+kan inte ersätta en fungerande post.
 
 **Inga entiteter alls.** Kontrollera att posten är inlagd och att minst ett barn
-är valt under *Konfigurera*. Har du flera barn och valde bort alla blir ingenting
-skapat. Efter en ändring av inställningarna laddas posten om automatiskt.
+är valt under *Konfigurera*. Efter en ändring av inställningarna laddas posten
+om automatiskt.
 
 **Entiteterna blir oattribuerade (`unavailable`).** Det betyder att hämtningen
 misslyckades, oftast ett nätverksfel mot InfoMentor. Sessionen står kvar och
 visar `ok`, och `sensor.infomentor_senaste_uppdatering` visar när det senast
-lyckades. Nästa poll brukar rätta till det. Fortsätter det: titta i Home
+lyckades. Nästa poll brukar rätta till det. Det gäller även när InfoMentor har
+en störning och svarar med en underhållssida: integrationen försöker igen vid
+nästa poll i stället för att be om BankID. Fortsätter det: titta i Home
 Assistants logg efter `infomentor` — felmeddelandena är avsiktligt
 innehållslösa (inga tokens, inga personuppgifter) men skiljer på nätverksfel,
 HTTP-status och oväntat svarsformat.
 
+**Felsökningslogg för inloggningen.** Slå på *Aktivera felsökningsloggning* på
+integrationens sida. Då skriver BankID-inloggningen dessutom ett kort förlopp
+till `/config/infomentor-login.log`, utan tokens, cookie-värden eller barnens
+namn. Stäng av loggningen när du är klar, så slutar filen att växa.
+
 **`cannot_connect` i inloggningsdialogen.** Nätverksfel mot InfoMentor, inte fel
 lösenord eller fel konto. Prova igen.
 
-**QR-sidan säger att den är stängd, eller ger 404.** Försöket är slut. Gå
-tillbaka till Home Assistant, som visar nästa steg eller en ny kod.
+**QR-sidan säger att länken är förbrukad.** Försöket är slut eller har gått ut.
+Gå tillbaka till Home Assistant, stäng dialogen och välj BankID igen. Då får du
+en ny QR-kod.
+
+**BankID-appen öppnas inte på telefonen.** Logga in med QR-kod från en dator
+eller surfplatta i stället.
 
 ## Attribution
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -11,12 +12,45 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, MANUFACTURER
+from .const import (
+    DOMAIN,
+    MANUFACTURER,
+    MAX_NEWS_CONTENT_LENGTH,
+    MAX_NOTIFICATION_BODY_LENGTH,
+    NOTIFICATIONS_BYTE_BUDGET,
+    SHORT_NOTIFICATION_BODY_LENGTH,
+)
 from .coordinator import InfoMentorCoordinator
 from .entity import InfoMentorEntity
 
 MAX_ATTRIBUTE_ITEMS = 10
 MAX_TITLE_LENGTH = 255
+
+
+def _clip(text: str | None, limit: int) -> str | None:
+    """Cut a long text so the attributes stay under the recorder's limit."""
+    if text is None or len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _encoded_size(value: object) -> int:
+    return len(json.dumps(value, ensure_ascii=False, default=str).encode())
+
+
+def _fit_notifications(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the list under its byte budget, sparing the newest messages.
+
+    The list is newest first. Starting with the oldest message, each body is
+    shortened and then left out, until the list fits. A newer body is only
+    touched when every older one is gone. Titles and subjects are short.
+    """
+    for item in reversed(items):
+        for body in (_clip(item["body"], SHORT_NOTIFICATION_BODY_LENGTH), None):
+            if _encoded_size(items) <= NOTIFICATIONS_BYTE_BUDGET:
+                return items
+            item["body"] = body
+    return items
 
 
 async def async_setup_entry(
@@ -61,16 +95,18 @@ class InfoMentorUnreadSensor(InfoMentorEntity, SensorEntity):
         if data is None:
             return {}
         return {
-            "notifications": [
-                {
-                    "title": item.title,
-                    "sent_at": item.sent_at,
-                    "type": item.notification_type,
-                    "subject": item.subject,
-                    "body": item.body,
-                }
-                for item in data.notifications[:MAX_ATTRIBUTE_ITEMS]
-            ]
+            "notifications": _fit_notifications(
+                [
+                    {
+                        "title": _clip(item.title, MAX_TITLE_LENGTH),
+                        "sent_at": item.sent_at,
+                        "type": item.notification_type,
+                        "subject": _clip(item.subject, MAX_TITLE_LENGTH),
+                        "body": _clip(item.body, MAX_NOTIFICATION_BODY_LENGTH),
+                    }
+                    for item in data.notifications[:MAX_ATTRIBUTE_ITEMS]
+                ]
+            )
         }
 
 
@@ -99,7 +135,7 @@ class InfoMentorNewsSensor(InfoMentorEntity, SensorEntity):
             "published_at": item.published_at,
             "news_id": item.id,
             "title": item.title,
-            "content": item.content,
+            "content": _clip(item.content, MAX_NEWS_CONTENT_LENGTH),
         }
 
 

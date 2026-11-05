@@ -303,6 +303,7 @@ def mock_info_mentor_api(monkeypatch):
         ]
         fetch_error: ClassVar[Exception | None] = None
         validate_error: ClassVar[Exception | None] = None
+        list_error: ClassVar[Exception | None] = None
 
         def __init__(self, session, refresh_token, *, on_token_refresh=None):
             self.session = session
@@ -322,6 +323,13 @@ def mock_info_mentor_api(monkeypatch):
             if FakeApi.validate_error is not None:
                 raise FakeApi.validate_error
             self.validated = True
+            return [Child(id=item["id"], name=item["name"]) for item in self.children]
+
+        async def async_get_children(self, *, with_names):
+            from custom_components.infomentor.api import Child
+
+            if FakeApi.list_error is not None:
+                raise FakeApi.list_error
             return [Child(id=item["id"], name=item["name"]) for item in self.children]
 
         async def async_fetch(self, child_ids, **kwargs):

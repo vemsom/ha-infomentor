@@ -14,6 +14,7 @@ from custom_components.infomentor.api import (
     Child,
     InfoMentorApi,
     InfoMentorAuthError,
+    InfoMentorConnectionError,
     InfoMentorResponseError,
     child_scope_hash,
     find_saml_form,
@@ -218,6 +219,8 @@ class FakeInfoMentor:
         self.token_requests: list[dict[str, str]] = []
         self.bearer_headers: list[str | None] = []
         self.reject_refresh = False
+        self.omit_access_token = False
+        self.hub_down = False
         self.hub_posts: list[str] = []
         self.pupil_switches: list[str] = []
 
@@ -241,14 +244,15 @@ class FakeInfoMentor:
         self.token_requests.append(form)
         if self.reject_refresh or form.get("grant_type") != "refresh_token":
             return web.json_response({"error": "invalid_grant"}, status=400)
-        return web.json_response(
-            {
-                "access_token": "ACCESS",
-                "refresh_token": "ROTATED",
-                "expires_in": 600,
-                "token_type": "Bearer",
-            }
-        )
+        payload = {
+            "access_token": "ACCESS",
+            "refresh_token": "ROTATED",
+            "expires_in": 600,
+            "token_type": "Bearer",
+        }
+        if self.omit_access_token:
+            del payload["access_token"]
+        return web.json_response(payload)
 
     async def sso(self, request: web.Request) -> web.Response:
         self.bearer_headers.append(request.headers.get("Authorization"))
@@ -278,6 +282,9 @@ class FakeInfoMentor:
 
     async def news(self, request: web.Request) -> web.Response:
         self.hub_posts.append("news")
+        if self.hub_down:
+            # What the Hub answers when it has no session for the request.
+            return web.Response(text="")
         return web.json_response(
             {
                 "items": [
@@ -407,6 +414,44 @@ async def test_hub_session_renewed_once(fake_info_mentor) -> None:
     )
     assert data[0].child.name == "Olle Testsson"
     assert len(fake.token_requests) >= 1
+
+
+async def test_rotated_token_is_kept_when_the_answer_is_incomplete(
+    fake_info_mentor,
+) -> None:
+    """The new refresh token is saved even if the rest of the answer is bad.
+
+    InfoMentor invalidates the old token when it issues a new one, so losing
+    the new one would lock the integration out.
+    """
+    fake, client = fake_info_mentor
+    fake.omit_access_token = True
+    rotated: list[str] = []
+    api = InfoMentorApi(client.session, "ORIGINAL", on_token_refresh=rotated.append)
+
+    with pytest.raises(InfoMentorResponseError):
+        await api.async_validate()
+
+    assert rotated == ["ROTATED"]
+    assert api.refresh_token == "ROTATED"
+
+
+async def test_hub_failing_after_a_fresh_session_is_not_an_auth_error(
+    fake_info_mentor,
+) -> None:
+    """A Hub that keeps answering empty after renewal is a temporary error.
+
+    The token was accepted and the sign-in succeeded, so asking for BankID
+    again would not help. The next poll tries again instead.
+    """
+    fake, client = fake_info_mentor
+    fake.hub_down = True
+    api = InfoMentorApi(client.session, "ORIGINAL")
+
+    with pytest.raises(InfoMentorConnectionError):
+        await api.async_validate()
+
+    assert fake.hub_posts == ["news", "news"]
 
 
 def test_child_dataclass_is_immutable() -> None:
