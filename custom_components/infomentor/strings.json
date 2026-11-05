@@ -3,25 +3,25 @@
     "step": {
       "user": {
         "title": "Connect to InfoMentor",
-        "description": "Log in with BankID. No token needs to be copied.",
+        "description": "Choose how to approve the login with BankID.\n\n- **QR code**: you use Home Assistant on a computer or tablet and have BankID on your phone.\n- **This phone**: Home Assistant and BankID are on the same phone.",
         "menu_options": {
-          "bankid": "BankID – scan a QR code on another device",
+          "bankid": "BankID with QR code (scan with your phone)",
           "token": "Paste a refresh token (advanced)",
-          "bankid_phone": "BankID – on this phone"
+          "bankid_phone": "BankID on this phone"
         }
       },
       "reauth": {
         "title": "InfoMentor rejected the login",
-        "description": "Authorise the integration again with BankID.",
+        "description": "InfoMentor needs you to log in again. Choose how to approve the login with BankID.\n\n- **QR code**: you use Home Assistant on a computer or tablet and have BankID on your phone.\n- **This phone**: Home Assistant and BankID are on the same phone.",
         "menu_options": {
-          "bankid": "BankID – scan a QR code on another device",
+          "bankid": "BankID with QR code (scan with your phone)",
           "token": "Paste a refresh token (advanced)",
-          "bankid_phone": "BankID – on this phone"
+          "bankid_phone": "BankID on this phone"
         }
       },
       "bankid": {
         "title": "Log in with BankID",
-        "description": "Press Submit to start a new BankID login.",
+        "description": "The login did not finish. Press **Submit** to try again with a new QR code.",
         "data": {}
       },
       "token": {
@@ -39,17 +39,16 @@
         }
       },
       "bankid_wait": {
-        "title": "Confirm in BankID",
-        "description": "Open {qr_link_start}the login page{qr_link_end} and scan the code with BankID on your phone. The dialog continues by itself when you approve."
+        "title": "Log in with BankID"
       },
       "bankid_phone": {
         "title": "Log in with BankID on this phone",
-        "description": "Press Submit to start a new BankID login on this phone."
+        "description": "The login did not finish. Press **Submit** to try again. You get a new link to the BankID app."
       }
     },
     "progress": {
-      "bankid_scan": "Open {qr_link_start}the QR code in a browser{qr_link_end} and scan it with BankID on another device. The dialog continues by itself once you have approved. The link works only while this dialog is open.",
-      "bankid_phone_scan": "Tap [Open BankID]({launch_url}) and approve, then come back here. The dialog continues by itself. If the link does not open the app, use {qr_link_start}the QR page{qr_link_end} instead."
+      "bankid_scan": "1. Open the {qr_link_start}QR code{qr_link_end}. It opens in a new tab.\n2. Open the BankID app on your phone and tap **Scan QR code**.\n3. Point the camera at the code and approve the login in the app.\n4. Come back here. The dialog moves on by itself.\n\nKeep this dialog open in the meantime, because closing it stops the QR code from working.",
+      "bankid_phone_scan": "1. Tap [Open BankID]({launch_url}). The BankID app opens.\n2. Approve the login in the app.\n3. Come back to Home Assistant. The dialog moves on by itself.\n\nDoes the dialog stay put after you approved? Close it and log in again.\nDoes the BankID app not open? Log in with a QR code from a computer instead."
     },
     "error": {
       "invalid_auth": "InfoMentor rejected the login.",
@@ -57,8 +56,8 @@
       "unknown": "Unexpected response from InfoMentor.",
       "no_children": "Select at least one child.",
       "wrong_account": "That login belongs to a different InfoMentor account.",
-      "bankid_timeout": "The BankID login timed out. Try again.",
-      "bankid_cancelled": "The BankID login was cancelled or rejected. Try again."
+      "bankid_timeout": "The BankID login timed out.",
+      "bankid_cancelled": "The BankID login was cancelled or declined."
     },
     "abort": {
       "already_configured": "This InfoMentor account is already configured.",

@@ -100,6 +100,20 @@ async def test_page_polls_the_frame_next_to_itself(
     assert "getElementById('open')" not in body
 
 
+async def test_page_tells_the_user_what_to_do(hass, hass_client_no_auth, store) -> None:
+    """The page lists the steps and has a text for every status of a login."""
+    session = store.open()
+    client = await hass_client_no_auth()
+    body = await (await client.get(urlsplit(session.url).path)).text()
+
+    assert "Skanna QR-kod" in body
+    statuses = ("starting", "waiting", "user_sign", "verifying")
+    for status in (*statuses, "complete", "cancelled", "timeout", "failed"):
+        assert f"{status}:'" in body, status
+    # The steps and the code are hidden once the attempt is over.
+    assert "FINAL.includes(d.status))done()" in body
+
+
 async def test_update_publishes_the_rotating_qr(
     hass, hass_client_no_auth, store
 ) -> None:
