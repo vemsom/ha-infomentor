@@ -137,13 +137,16 @@ finns i [docs/exempel.md](docs/exempel.md).
 
 ## Exempel
 
-Två färdiga exempel finns i [docs/exempel.md](docs/exempel.md): en blueprint
-som skickar en notis när något nytt kommer från skolan, och en Lovelace-vy som
-visar det senaste. Båda bygger enbart på entiteterna ovan och kan användas som
-de är eller som utgångspunkt.
+Färdiga exempel finns i [docs/exempel.md](docs/exempel.md): en blueprint som
+skickar en notis när något nytt kommer från skolan, en Lovelace-vy som visar det
+senaste, en automation som delar långa meddelanden och ett historikkort för
+dashboarden. Alla bygger enbart på entiteterna ovan och kan användas som de är
+eller som utgångspunkt.
 
 - [Blueprint för skolnotis](blueprints/automation/infomentor/skolnotis.yaml)
 - [Lovelace-vyn skola](examples/lovelace/skola-vy.yaml)
+- [Notis med hela meddelandet, delad](examples/automation/skolnotis-delad.yaml)
+- [Historikkort för dashboarden](examples/lovelace/skola-historik.yaml)
 
 ## Kända begränsningar
 

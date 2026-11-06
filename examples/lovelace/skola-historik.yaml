@@ -1,0 +1,26 @@
+# Exempel: historikkort för InfoMentor
+#
+# Kortet visar skolans meddelanden och nyheter med flikar och sidbläddring.
+# Det läser Home Assistants egen historik — ingen extra integration, ingen
+# molntjänst, inga API-nycklar.
+#
+# INSTALLATION
+# 1. Kopiera infomentor-historik.js till /config/www/ på din Home
+#    Assistant-instans (samma mapp som andra lokala resurser).
+# 2. Inställningar -> Instrumentpaneler -> tre prickar -> Resurser ->
+#    Lägg till resurs:  /local/infomentor-historik.js   typ: JavaScript-modul
+# 3. Lägg in kortet nedan i en vy (Raw configuration editor).
+#
+# VIKTIGT OM HISTORIKEN
+# Kortet kan bara visa det Home Assistants recorder sparar. Standard är 10
+# dagar; vill du bläddra längre bakåt måste du höja purge_keep_days under
+# recorder: i configuration.yaml — det kostar databasutrymme.
+#
+# Varje post läggs till när sensorn byter värde. En nyhet som ligger kvar
+# som "senaste nyhet" i en vecka blir alltså en post, inte en per poll.
+
+type: custom:infomentor-historik
+message_sensor: sensor.DITT_BARN_OLASTA_SKOLHANDELSER
+news_sensor: sensor.DITT_BARN_SENASTE_NYHET
+days: 10
+page_size: 1

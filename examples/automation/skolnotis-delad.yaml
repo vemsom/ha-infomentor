@@ -1,0 +1,72 @@
+# Exempel: notis med hela meddelandet, uppdelat i två delar
+#
+# Android kapar långa texter i notisen. Den här automationen delar meddelandet
+# vid ett ord och skickar del 2 först och del 1 sist, så att del 1 hamnar överst
+# i notislistan och man läser uppifrån och ner.
+#
+# Byt ut:
+#   sensor.DITT_BARN_OLASTA_SKOLHANDELSER  -> din sensor
+#   notify.mobile_app_DIN_TELEFON          -> din notifieringstjänst
+#   /lovelace/skola                        -> sidan som ska öppnas vid tryck
+#
+# Kortare meddelanden skickas som en enda notis — uppdelningen sker bara när
+# texten är längre än 550 tecken.
+
+alias: Skolan - hela meddelandet i två delar
+description: Skickar hela skolmeddelandet även när Android kapar texten.
+mode: single
+
+trigger:
+  - trigger: state
+    entity_id: sensor.DITT_BARN_OLASTA_SKOLHANDELSER
+
+condition:
+  - condition: template
+    value_template: >-
+      {{ trigger.to_state.state | int(0) > trigger.from_state.state | int(0) }}
+
+variables:
+  items: >-
+    {{ state_attr('sensor.DITT_BARN_OLASTA_SKOLHANDELSER', 'notifications') or [] }}
+  messages: >-
+    {{ items | selectattr('type', 'eq', 'MessageCreated')
+             | selectattr('body') | list }}
+  subject: "{{ messages[0].subject if messages else 'Skolan' }}"
+  body: "{{ messages[0].body if messages else '' }}"
+  cut: >-
+    {% set b = body %}
+    {% if b | length <= 550 %}0
+    {% else %}{{ b[:550].rfind(' ') + 1 }}
+    {% endif %}
+  part1: "{{ body[:cut | int] if cut | int > 0 else body }}"
+  part2: "{{ body[cut | int:] if cut | int > 0 else '' }}"
+
+action:
+  - if:
+      - condition: template
+        value_template: "{{ part2 | trim | length > 0 }}"
+    then:
+      # Del 2 först, sedan del 1 — då hamnar del 1 överst i listan.
+      - action: notify.mobile_app_DIN_TELEFON
+        data:
+          title: "{{ subject }} (2/2)"
+          message: "{{ part2 }}"
+          data:
+            url: /lovelace/skola
+            clickAction: /lovelace/skola
+      - delay: "00:00:01"
+      - action: notify.mobile_app_DIN_TELEFON
+        data:
+          title: "{{ subject }} (1/2)"
+          message: "{{ part1 }}"
+          data:
+            url: /lovelace/skola
+            clickAction: /lovelace/skola
+    else:
+      - action: notify.mobile_app_DIN_TELEFON
+        data:
+          title: "{{ subject }}"
+          message: "{{ body if body else trigger.to_state.state ~ ' nya händelser från skolan' }}"
+          data:
+            url: /lovelace/skola
+            clickAction: /lovelace/skola
