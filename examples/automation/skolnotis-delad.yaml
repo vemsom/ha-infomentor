@@ -1,20 +1,25 @@
-# Exempel: notis med hela meddelandet, uppdelat i två delar
+# Exempel: notis med hela meddelandet, uppdelat i delar
 #
-# Android kapar långa texter i notisen. Den här automationen delar meddelandet
-# vid ett ord och skickar del 2 först och del 1 sist, så att del 1 hamnar överst
-# i notislistan och man läser uppifrån och ner.
+# Android kapar en notis vid ungefär 285 tecken, även när den är expanderad.
+# Den här automationen skickar därför hela meddelandet i delar om högst
+# 250 tecken, delade vid ordgräns, och numrerar dem (1/3), (2/3), (3/3).
+#
+# Delarna skickas i omvänd ordning — sista delen först — eftersom Android
+# lägger den senast skickade notisen överst i listan. Då hamnar del 1 överst
+# och man läser uppifrån och ner.
 #
 # Byt ut:
 #   sensor.DITT_BARN_OLASTA_SKOLHANDELSER  -> din sensor
 #   notify.mobile_app_DIN_TELEFON          -> din notifieringstjänst
 #   /lovelace/skola                        -> sidan som ska öppnas vid tryck
 #
-# Kortare meddelanden skickas som en enda notis — uppdelningen sker bara när
-# texten är längre än 550 tecken.
+# Bara det nyaste meddelandet skickas, och bara om det är högst tre timmar
+# gammalt — en gammal post som blir oläst igen skickar ingen notis.
 
-alias: Skolan - hela meddelandet i två delar
+alias: Skolan - hela meddelandet i delar
 description: Skickar hela skolmeddelandet även när Android kapar texten.
-mode: single
+mode: queued
+max: 5
 
 trigger:
   - trigger: state
@@ -23,50 +28,55 @@ trigger:
 condition:
   - condition: template
     value_template: >-
-      {{ trigger.to_state.state | int(0) > trigger.from_state.state | int(0) }}
+      {% set m = (state_attr('sensor.DITT_BARN_OLASTA_SKOLHANDELSER', 'notifications') or [])
+                 | selectattr('type', 'eq', 'MessageCreated')
+                 | selectattr('body')
+                 | selectattr('sent_at')
+                 | sort(attribute='sent_at', reverse=true) | list %}
+      {{ m and (as_timestamp(now()) - as_timestamp((m | first).sent_at)) < 10800 }}
 
 variables:
-  items: >-
-    {{ state_attr('sensor.DITT_BARN_OLASTA_SKOLHANDELSER', 'notifications') or [] }}
-  messages: >-
-    {{ items | selectattr('type', 'eq', 'MessageCreated')
-             | selectattr('body') | list }}
-  subject: "{{ messages[0].subject if messages else 'Skolan' }}"
-  body: "{{ messages[0].body if messages else '' }}"
-  cut: >-
-    {% set b = body %}
-    {% if b | length <= 550 %}0
-    {% else %}{{ b[:550].rfind(' ') + 1 }}
-    {% endif %}
-  part1: "{{ body[:cut | int] if cut | int > 0 else body }}"
-  part2: "{{ body[cut | int:] if cut | int > 0 else '' }}"
+  # Allt som behövs för notisen räknas ut en gång och packas som JSON, så att
+  # delarna kan plockas ut ett index i taget i repeat-loopen.
+  packet: >-
+    {%- set m = (state_attr('sensor.DITT_BARN_OLASTA_SKOLHANDELSER', 'notifications') or [])
+               | selectattr('type', 'eq', 'MessageCreated')
+               | selectattr('body')
+               | selectattr('sent_at')
+               | sort(attribute='sent_at', reverse=true) | list -%}
+    {%- set amne = ((m | first).subject | trim) if m and (m | first).subject else '' -%}
+    {%- set body = ((m | first).body | trim) if m else '' -%}
+    {%- set ns = namespace(delar=[], rad='') -%}
+    {%- for ord in body.split(' ') -%}
+    {%- if ns.rad and ((ns.rad ~ ' ' ~ ord) | length) > 250 -%}
+    {%- set ns.delar = ns.delar + [ns.rad] -%}{%- set ns.rad = ord -%}
+    {%- else -%}{%- set ns.rad = ((ns.rad ~ ' ' ~ ord) | trim) -%}
+    {%- endif -%}
+    {%- endfor -%}
+    {%- if ns.rad -%}{%- set ns.delar = ns.delar + [ns.rad] -%}{%- endif -%}
+    {%- set delar = ns.delar if ns.delar else [''] -%}
+    {{ {'amne': (amne if amne else 'Meddelande från skolan'), 'antal': delar | length, 'delar': delar} | tojson }}
 
 action:
-  - if:
-      - condition: template
-        value_template: "{{ part2 | trim | length > 0 }}"
-    then:
-      # Del 2 först, sedan del 1 — då hamnar del 1 överst i listan.
-      - action: notify.mobile_app_DIN_TELEFON
-        data:
-          title: "{{ subject }} (2/2)"
-          message: "{{ part2 }}"
+  # Omvänd ordning: sista delen först, del 1 sist.
+  - repeat:
+      count: "{{ (packet | from_json).antal }}"
+      sequence:
+        - variables:
+            del: "{{ (packet | from_json).antal - repeat.index + 1 }}"
+        - action: notify.mobile_app_DIN_TELEFON
           data:
-            url: /lovelace/skola
-            clickAction: /lovelace/skola
-      - delay: "00:00:01"
-      - action: notify.mobile_app_DIN_TELEFON
-        data:
-          title: "{{ subject }} (1/2)"
-          message: "{{ part1 }}"
-          data:
-            url: /lovelace/skola
-            clickAction: /lovelace/skola
-    else:
-      - action: notify.mobile_app_DIN_TELEFON
-        data:
-          title: "{{ subject }}"
-          message: "{{ body if body else trigger.to_state.state ~ ' nya händelser från skolan' }}"
-          data:
-            url: /lovelace/skola
-            clickAction: /lovelace/skola
+            title: >-
+              {{ (packet | from_json).amne
+                 ~ (' (' ~ del ~ '/' ~ (packet | from_json).antal ~ ')'
+                    if (packet | from_json).antal > 1 else '') }}
+            message: "{{ (packet | from_json).delar[del - 1] }}"
+            data:
+              url: /lovelace/skola
+              clickAction: /lovelace/skola
+        - delay: "00:00:01"
+
+# iOS staplar notiser med den nyaste nederst, så där blir läsordningen rätt om
+# delarna skickas i vanlig ordning. Använder du en iPhone byter du ut raden
+# "del: (packet | from_json).antal - repeat.index + 1" mot
+# "del: repeat.index".

@@ -93,39 +93,50 @@ integrationer.
 4. Använder du en annan sökväg än `skola` ändrar du `url` och `clickAction` i
    automationen så att notisen öppnar rätt sida.
 
-### Hela meddelandet i två notiser
+### Hela meddelandet i delar
 
-Android kapar långa texter i en notis, även när notisen är expanderad.
+Android kapar en notis vid ungefär **285 tecken**, även när notisen är
+expanderad — resten försvinner. Mätt på Android 15 med Home Assistants
+companion-app: en testnotis med 200 numrerade fält slutade på fält 57.
+
 [`examples/automation/skolnotis-delad.yaml`](../examples/automation/skolnotis-delad.yaml)
-är en färdig automation som skickar hela skolmeddelandet ändå: texten delas vid
-ett ord vid 550 tecken, del 2 skickas först och del 1 sist (med en sekunds
-mellanrum), så att del 1 hamnar överst i notislistan och läses först. Rubriken
-får `(1/2)` respektive `(2/2)`. Kortare meddelanden går som en enda notis.
-Automationen reagerar, precis som blueprinten, bara när antalet olästa
-händelser går upp.
+skickar därför hela skolmeddelandet i delar om högst 250 tecken, delade vid
+ordgräns, med `(1/3)`, `(2/3)`, `(3/3)` i rubriken. Delarna skickas i **omvänd
+ordning** — sista först — eftersom Android lägger den senast skickade notisen
+överst. Då hamnar del 1 överst och läses först. (På iOS är det tvärtom: där
+staplas den nyaste nederst, så skicka i vanlig ordning.)
 
-Uppdelningen ligger i automationens variabler:
+Två saker till som automationen gör, och som är värda att känna till:
+
+- Den tar det **nyaste** meddelandet, sorterat på `sent_at` — inte den första
+  posten i listan. Annars skickas ett gammalt meddelande så fort antalet olästa
+  ökar av en annan anledning, till exempel en nyhet.
+- Den skickar bara om meddelandet är **högst tre timmar gammalt**. Blir en
+  gammal post oläst igen (skolan ändrar i den, eller inloggningen markeras om)
+  går ingen notis ut.
+
+Allt räknas ut en gång i variabeln `packet`, som JSON, så att repeat-loopen kan
+plocka ut en del i taget:
 
 ```yaml
-cut: >-
-  {% set b = body %}
-  {% if b | length <= 550 %}0
-  {% else %}{{ b[:550].rfind(' ') + 1 }}
-  {% endif %}
-part1: "{{ body[:cut | int] if cut | int > 0 else body }}"
-part2: "{{ body[cut | int:] if cut | int > 0 else '' }}"
+packet: >-
+  {%- set body = ... -%}
+  {%- set ns = namespace(delar=[], rad='') -%}
+  {%- for ord in body.split(' ') -%}
+  {%- if ns.rad and ((ns.rad ~ ' ' ~ ord) | length) > 250 -%}
+  {%- set ns.delar = ns.delar + [ns.rad] -%}{%- set ns.rad = ord -%}
+  {%- else -%}{%- set ns.rad = ((ns.rad ~ ' ' ~ ord) | trim) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ {'amne': ..., 'antal': delar | length, 'delar': delar} | tojson }}
 ```
-
-Är `part2` tom skickas bara en notis; annars går del 2 ut först och del 1 efter
-en fördröjning på en sekund.
 
 Byt ut tre saker innan du sparar:
 
 - `sensor.DITT_BARN_OLASTA_SKOLHANDELSER` — barnets sensor för olästa
-  händelser, `sensor.<barn>_olasta_skolhandelser`. Den finns i både `trigger`
-  och `variables`.
-- `notify.mobile_app_DIN_TELEFON` — din notifieringstjänst, i båda
-  `action`-stegen.
+  händelser, `sensor.<barn>_olasta_skolhandelser`. Den finns i `trigger`,
+  `condition` och `variables`.
+- `notify.mobile_app_DIN_TELEFON` — din notifieringstjänst, i `action`-steget.
 - `/lovelace/skola` — sidan som öppnas vid tryck, i `url` och `clickAction`.
 
 ### Historik i dashboarden

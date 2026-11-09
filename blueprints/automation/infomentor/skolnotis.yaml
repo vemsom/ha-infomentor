@@ -1,9 +1,12 @@
 blueprint:
-  name: InfoMentor – notis när olästa skolhändelser ökar
+  name: InfoMentor – notis när ett nytt meddelande kommer
   description: >-
-    Skickar en notis när antalet olästa händelser från skolan ökar. Rubriken blir
-    meddelandets ämne och brödtexten meddelandets text. Saknas text visas antalet
-    nya händelser i stället. Ett tryck på notisen öppnar den sida du anger.
+    Skickar en notis när ett nytt meddelande från skolan kommer. Bara det nyaste
+    meddelandet skickas, och bara om det är högst tre timmar gammalt, så att en
+    gammal post som blir oläst igen inte skickar någon notis. Hela texten följer
+    med, uppdelad i delar om högst 250 tecken vid ordgräns — Android kapar
+    längre notiser. Delarna skickas i omvänd ordning så att del 1 hamnar överst
+    i notislistan. Ett tryck på notisen öppnar den sida du anger.
   domain: automation
   source_url: https://github.com/vemsom/ha-infomentor/blob/master/blueprints/automation/infomentor/skolnotis.yaml
   input:
@@ -33,10 +36,26 @@ blueprint:
 variables:
   unread_sensor_entity: !input unread_sensor
   dashboard_url: !input dashboard_path
-  items: "{{ state_attr(unread_sensor_entity, 'notifications') or [] }}"
-  messages: >-
-    {{ items | selectattr('type', 'eq', 'MessageCreated')
-             | selectattr('body') | list }}
+  # Allt som behövs för notisen räknas ut en gång och packas som JSON, så att
+  # delarna kan plockas ut ett index i taget i repeat-loopen.
+  packet: >-
+    {%- set m = (state_attr(unread_sensor_entity, 'notifications') or [])
+               | selectattr('type', 'eq', 'MessageCreated')
+               | selectattr('body')
+               | selectattr('sent_at')
+               | sort(attribute='sent_at', reverse=true) | list -%}
+    {%- set amne = ((m | first).subject | trim) if m and (m | first).subject else '' -%}
+    {%- set body = ((m | first).body | trim) if m else '' -%}
+    {%- set ns = namespace(delar=[], rad='') -%}
+    {%- for ord in body.split(' ') -%}
+    {%- if ns.rad and ((ns.rad ~ ' ' ~ ord) | length) > 250 -%}
+    {%- set ns.delar = ns.delar + [ns.rad] -%}{%- set ns.rad = ord -%}
+    {%- else -%}{%- set ns.rad = ((ns.rad ~ ' ' ~ ord) | trim) -%}
+    {%- endif -%}
+    {%- endfor -%}
+    {%- if ns.rad -%}{%- set ns.delar = ns.delar + [ns.rad] -%}{%- endif -%}
+    {%- set delar = ns.delar if ns.delar else [''] -%}
+    {{ {'amne': (amne if amne else 'Meddelande från skolan'), 'antal': delar | length, 'delar': delar} | tojson }}
 
 trigger:
   - trigger: state
@@ -45,17 +64,32 @@ trigger:
 condition:
   - condition: template
     value_template: >-
-      {{ trigger.to_state.state | int(0) > trigger.from_state.state | int(0) }}
+      {% set m = (state_attr(unread_sensor_entity, 'notifications') or [])
+                 | selectattr('type', 'eq', 'MessageCreated')
+                 | selectattr('body')
+                 | selectattr('sent_at')
+                 | sort(attribute='sent_at', reverse=true) | list %}
+      {{ m and (as_timestamp(now()) - as_timestamp((m | first).sent_at)) < 10800 }}
 
 action:
-  - action: !input notify_service
-    data:
-      title: >-
-        {{ messages[0].subject if messages and messages[0].subject else 'Skolan' }}
-      message: >-
-        {{ messages[0].body if messages else (trigger.to_state.state ~ ' nya händelser från skolan') }}
-      data:
-        url: "{{ dashboard_url }}"
-        clickAction: "{{ dashboard_url }}"
+  # Omvänd ordning: sista delen först, del 1 sist, så att del 1 hamnar överst
+  # i Androids notislista. På iOS skickar du i vanlig ordning i stället.
+  - repeat:
+      count: "{{ (packet | from_json).antal }}"
+      sequence:
+        - variables:
+            del: "{{ (packet | from_json).antal - repeat.index + 1 }}"
+        - action: !input notify_service
+          data:
+            title: >-
+              {{ (packet | from_json).amne
+                 ~ (' (' ~ del ~ '/' ~ (packet | from_json).antal ~ ')'
+                    if (packet | from_json).antal > 1 else '') }}
+            message: "{{ (packet | from_json).delar[del - 1] }}"
+            data:
+              url: "{{ dashboard_url }}"
+              clickAction: "{{ dashboard_url }}"
+        - delay: "00:00:01"
 
-mode: single
+mode: queued
+max: 5
